@@ -886,11 +886,13 @@ async function sincronizarComNuvem(forcarRender){
   const vendLocais     = Object.keys(state.vendTotais||{}).length;
   const vendNuvem      = Object.keys(dadosNuvem.vendTotais||{}).length;
 
-  const mudou = clientesNuvem !== clientesLocais || vendNuvem !== vendLocais ||
-                JSON.stringify(dadosNuvem.vendedores) !== JSON.stringify(state.vendedores) ||
-                JSON.stringify(dadosNuvem.metas) !== JSON.stringify(state.metas);
+  // Só atualiza do local com dados da nuvem se a nuvem tiver MAIS dados
+  // Isso evita que uma nuvem com state vazio apague dados recém importados
+  const nuvemTemMaisDados = clientesNuvem > clientesLocais || vendNuvem > vendLocais;
+  const metasMudou = JSON.stringify(dadosNuvem.vendedores) !== JSON.stringify(state.vendedores) ||
+                     JSON.stringify(dadosNuvem.metas) !== JSON.stringify(state.metas);
 
-  if(mudou || forcarRender){
+  if(nuvemTemMaisDados || (metasMudou && clientesNuvem >= clientesLocais) || forcarRender){
     state = dadosNuvem;
     saveState();
     if(currentUser && typeof syncAll==='function') syncAll();
