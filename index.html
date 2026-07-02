@@ -1093,21 +1093,19 @@ function saveState(){
       return false;
     }
   }
-  return true;
+  // Notifica outras abas e envia para a nuvem
   notifySync();
-  // Dispara evento para sincronizar outras abas do navegador
   try{ window.dispatchEvent(new StorageEvent('storage',{key:STORE_KEY})); }catch(e){}
-  // Atualiza links automaticamente se a aba Links estiver ativa
   try{
     const activeAdmin = document.querySelector('#sb-admin .sitem.active');
     if(activeAdmin && activeAdmin.textContent.includes('Links')){
       setTimeout(()=>{ if(typeof renderLinks==='function') renderLinks(); }, 150);
     }
   }catch(e){}
-  // Envia para a nuvem (Google Sheets) se configurado — só o admin envia
   if(CLOUD_SYNC_URL && currentUser && currentUser.tipo==='admin'){
     enviarParaNuvem();
   }
+  return true;
 }
 
 let state = loadState();
