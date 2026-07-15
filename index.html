@@ -2534,14 +2534,21 @@ function confirmImport(){
 
   let adicionados = 0, atualizados = 0;
 
-  // Merge vendTotais: acumula totais por vendedor no state
+  // Merge vendTotais: substitui o mês se já existir (evita duplicar em reimportação)
   if(!state.vendTotais) state.vendTotais = {};
   Object.entries(pendingVendTotais).forEach(([vk, vd])=>{
     if(!state.vendTotais[vk]) state.vendTotais[vk]={vend_nome:vd.vend_nome,vend_cod:vd.vend_cod,total:0,mesTotais:{}};
-    state.vendTotais[vk].total += vd.total;
+    const vdState = state.vendTotais[vk];
+    if(vd.vend_nome) vdState.vend_nome = vd.vend_nome;
     Object.entries(vd.mesTotais||{}).forEach(([mes,val])=>{
-      state.vendTotais[vk].mesTotais[mes]=(state.vendTotais[vk].mesTotais[mes]||0)+val;
+      const anterior = vdState.mesTotais[mes]||0;
+      vdState.mesTotais[mes] = val; // substitui (não soma) para evitar duplicar
+      vdState.total = Math.max(0, (vdState.total||0) - anterior + val);
     });
+  });
+  // Recalcula total geral de cada vendedor a partir dos meses
+  Object.values(state.vendTotais).forEach(vd=>{
+    vd.total = Object.values(vd.mesTotais||{}).reduce((s,v)=>s+v, 0);
   });
   pendingVendTotais = {};
 
@@ -4347,12 +4354,13 @@ function excluirImportacao(idx){
   const item = hist[idx];
   if(!item){ alert('Item não encontrado.'); return; }
 
-  if(!confirm('Excluir a importação "'+( item.periodo||'—')+'"?\n\nTodos os clientes deste período serão removidos da base.\n\nEsta ação não pode ser desfeita.')) return;
+  if(!confirm('Excluir a importação "'+(item.periodo||'—')+'"?\n\nOs clientes deste período serão removidos da base.\n\nEsta ação não pode ser desfeita.')) return;
 
   const chave = item.importKey || item.key || item.mesRef || null;
 
   if(chave){
     const antes = state.clientes.length;
+    // Remove clientes que pertencem SOMENTE a este período
     state.clientes = state.clientes.filter(c => (c.importKey || c.mesRef) !== chave);
     const removidos = antes - state.clientes.length;
     alert('✓ '+removidos+' clientes removidos da base.');
@@ -4361,12 +4369,43 @@ function excluirImportacao(idx){
     state.clientes = [];
   }
 
-  // Recalcula vendTotais do zero (sem o período excluído)
-  state.vendTotais = {};
-  state.clientes.forEach(c=>{
-    // Após remoção por importKey, os clientes restantes ainda têm totalGeral
-    // vendTotais será recalculado na próxima importação
-  });
+  // ── RECALCULAR vendTotais preservando outros meses ──
+  // Detectar o mês/ano da chave excluída para remover só ele
+  // A chave é 'imp-TIMESTAMP' — vamos identificar o período pelo histórico
+  const periodoExcluido = item.periodo || ''; // ex: "Julho/2025"
+
+  if(chave && state.vendTotais){
+    // Descobrir qual anoMes corresponde ao período excluído
+    const MESES_NOMES=['janeiro','fevereiro','março','marco','abril','maio','junho',
+                       'julho','agosto','setembro','outubro','novembro','dezembro'];
+    const MESES_NUM  =['01','02','03','03','04','05','06',
+                       '07','08','09','10','11','12'];
+    let anoMesExcluido = null;
+    const pLower = periodoExcluido.toLowerCase();
+    MESES_NOMES.forEach((mn,i)=>{
+      if(pLower.includes(mn)){
+        const anoMatch = pLower.match(/(\d{4})/);
+        if(anoMatch) anoMesExcluido = anoMatch[1]+'-'+MESES_NUM[i];
+      }
+    });
+
+    if(anoMesExcluido){
+      // Remove só o mês excluído de cada vendedor e recalcula total
+      Object.values(state.vendTotais).forEach(vd=>{
+        if(vd.mesTotais && vd.mesTotais[anoMesExcluido]){
+          const valorRemovido = vd.mesTotais[anoMesExcluido]||0;
+          delete vd.mesTotais[anoMesExcluido];
+          vd.total = Math.max(0, (vd.total||0) - valorRemovido);
+        }
+      });
+    } else {
+      // Sem info do período — zera tudo (último recurso)
+      state.vendTotais = {};
+    }
+  } else {
+    state.vendTotais = {};
+  }
+
   state.historicoImport.splice(idx, 1);
   saveState();
   renderHistorico();
