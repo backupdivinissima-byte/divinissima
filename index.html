@@ -162,7 +162,7 @@ tr:hover td{background:var(--cream)}
 
 
   <!-- ===== PWA / App Mobile ===== -->
-  <link rel="manifest" href="manifest.json">
+  <!-- manifest removido para evitar cache do Service Worker -->
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png">
   <link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png">
   <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
@@ -4770,11 +4770,15 @@ window.addEventListener('appinstalled', () => {
   if(btn) btn.classList.add('hidden');
 });
 
-// Remove qualquer Service Worker antigo para garantir que atualizações do GitHub sejam carregadas imediatamente
+// Desregistra TODOS os Service Workers e limpa caches para garantir versão mais recente
 if('serviceWorker' in navigator){
   navigator.serviceWorker.getRegistrations().then(regs=>{
-    regs.forEach(r=>r.unregister());
+    regs.forEach(r=>{ r.unregister(); console.log('SW desregistrado'); });
   });
+  // Limpa todos os caches do navegador
+  if(window.caches){
+    caches.keys().then(keys=>keys.forEach(k=>{ caches.delete(k); console.log('Cache limpo:', k); }));
+  }
 }
 
 </script>
