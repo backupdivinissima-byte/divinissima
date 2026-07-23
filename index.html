@@ -312,7 +312,7 @@ tr:hover td{background:var(--cream)}
       </div>
       <!-- == ADMIN: CLIENTES INATIVOS == -->
       <div id="p-inativos" class="hidden">
-        <div class="section-title"><span class="ico">&#128683;</span> Clientes Inativos <span style="font-size:12px;color:var(--text-m);font-weight:400">(+60 dias sem compra)</span></div>
+        <div class="section-title"><span class="ico">&#128683;</span> Clientes Inativos <span style="font-size:12px;color:var(--text-m);font-weight:400">(+41 dias sem compra)</span></div>
         <div class="crm-resumo" id="crm-res-inat"></div>
         <div class="crm-toolbar">
           <input class="input" id="busca-inat" placeholder="&#128269; Buscar nome, código, telefone..." style="flex:1;min-width:180px" oninput="renderInativos()">
@@ -1384,21 +1384,21 @@ function renderDashboard(){
     </div>`;
 
   // ── ALERTAS INATIVOS ──
-  const inat31 = state.clientes.filter(c=>{ const d=diasSemAtend(c); return d!==null&&d>31; });
+  const inat31 = state.clientes.filter(c=>{ const d=diasSemAtend(c); return d!==null&&d>40; });
   const alertEl=document.getElementById('dash-alertas');
   if(alertEl && inat31.length>0){
-    const inat60   = inat31.filter(c=>{ const d=diasSemAtend(c); return d>60; }).length;
+    const inat60   = inat31.filter(c=>{ const d=diasSemAtend(c); return d>40; }).length;
     const inat31_60= inat31.length-inat60;
     alertEl.innerHTML=`
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
         <div style="background:#FFF3CD;border:1px solid #F0AD4E;border-radius:10px;padding:.75rem 1rem;display:flex;align-items:center;gap:10px">
           <span style="font-size:22px">⚠️</span>
-          <div><div style="font-size:13px;font-weight:700;color:#8A6D3B">${inat31_60} clientes entre 31–60 dias sem compra</div>
+          <div><div style="font-size:13px;font-weight:700;color:#8A6D3B">${inat31_60} clientes entre 41–60 dias sem compra</div>
           <div style="font-size:11px;color:#8A6D3B">Atenção — risco de inatividade</div></div>
         </div>
         <div style="background:#F8D7DA;border:1px solid #F5C6CB;border-radius:10px;padding:.75rem 1rem;display:flex;align-items:center;gap:10px">
           <span style="font-size:22px">🔴</span>
-          <div><div style="font-size:13px;font-weight:700;color:#721C24">${inat60} clientes acima de 60 dias sem compra</div>
+          <div><div style="font-size:13px;font-weight:700;color:#721C24">${inat60} clientes acima de 40 dias sem compra</div>
           <div style="font-size:11px;color:#721C24">Inativos — ação necessária</div></div>
         </div>
       </div>`;
@@ -1514,13 +1514,13 @@ function renderDashboard(){
 
   // ── FUNIL ──
   const comVend = state.clientes.filter(c=>c.cod_vendedor).length;
-  const ativos  = state.clientes.filter(c=>{ const d=diasSemAtend(c); return d!==null&&d<=30; }).length;
-  const inat31F = state.clientes.filter(c=>{ const d=diasSemAtend(c); return d!==null&&d>31; }).length;
+  const ativos  = state.clientes.filter(c=>{ const d=diasSemAtend(c); return d!==null&&d<=40; }).length;
+  const inat31F = state.clientes.filter(c=>{ const d=diasSemAtend(c); return d!==null&&d>40; }).length;
   const funnelData=[
     {label:'Total na base',   count:total,   pct:100, color:'#8B6F47'},
     {label:'Com vendedor',    count:comVend, pct:total>0?Math.round(comVend/total*100):0, color:'#B89A6A'},
-    {label:'Ativos (≤30d)',   count:ativos,  pct:total>0?Math.round(ativos/total*100):0,  color:'#27AE60'},
-    {label:'Inativos (+31d)', count:inat31F, pct:total>0?Math.round(inat31F/total*100):0, color:'#E74C3C'},
+    {label:'Ativos (≤40d)',   count:ativos,  pct:total>0?Math.round(ativos/total*100):0,  color:'#27AE60'},
+    {label:'Inativos (+41d)', count:inat31F, pct:total>0?Math.round(inat31F/total*100):0, color:'#E74C3C'},
   ];
   document.getElementById('dash-funnel').innerHTML=funnelData.map(f=>
     `<div class="funnel-row" style="background:${f.color};width:${Math.max(f.pct,12)}%;min-width:160px">
@@ -1612,8 +1612,8 @@ function statusTag(c){
   if(dias===null) return c.cod_vendedor
     ? '<span class="tag tag-ok">Atendido</span>'
     : '<span class="tag tag-err">Sem atendimento</span>';
-  if(dias > 60) return `<span class="tag tag-err">Inativo (${dias}d)</span>`;
-  if(dias > 30) return `<span class="tag tag-warn">${dias} dias</span>`;
+  if(dias > 40) return `<span class="tag tag-err">Inativo (${dias}d)</span>`;
+  if(dias > 40) return `<span class="tag tag-warn">${dias} dias</span>`;
   return `<span class="tag tag-ok">Ativo (${dias}d)</span>`;
 }
 
@@ -1621,7 +1621,7 @@ function cliRow(c, realIdx, tipo, hideEdit){
   const vNome = getVendedorNome(c.cod_vendedor);
   const dias = diasSemAtend(c);
   const diasCell = dias!==null
-    ? `<span style="font-weight:600;color:${dias>60?'var(--err)':dias>30?'var(--warn)':'var(--ok)'}">${dias}d</span>`
+    ? `<span style="font-weight:600;color:${dias>40?'var(--err)':dias>40?'var(--warn)':'var(--ok)'}">${dias}d</span>`
     : '—';
   const editBtn = hideEdit ? '' : `<td>
     <button class="btn btn-sm" onclick="editCliente(${realIdx},'${tipo}')">Editar</button>
@@ -1666,7 +1666,7 @@ function crmResumo(lista, elId){
   const el = document.getElementById(elId); if(!el) return;
   const total = lista.length;
   const comVend = lista.filter(c=>c.cod_vendedor).length;
-  const inat = lista.filter(c=>{ const d=diasSemAtend(c); return d!==null&&d>60; }).length;
+  const inat = lista.filter(c=>{ const d=diasSemAtend(c); return d!==null&&d>40; }).length;
   const ativos = lista.filter(c=>{ const d=diasSemAtend(c); return d!==null&&d<=60; }).length;
   const semData = lista.filter(c=>!c.dtUltCompra).length;
   el.innerHTML = `
@@ -1776,7 +1776,18 @@ function salvarVendCrmDetalhe(){
   const bases={total:state.clientes,mes:state.clientesMes||[],inat:state.clientesInativos||[],clivend:state.clientesCliVend||[]};
   const arr=bases[crmDetalheBase];
   if(arr&&arr[crmDetalheIdx]){
+    const clienteCod = arr[crmDetalheIdx].cod;
+    // Salva na base atual
     arr[crmDetalheIdx].cod_vendedor=login;
+    // Sincroniza na base principal state.clientes (fonte da verdade)
+    const idxPrincipal = state.clientes.findIndex(c=>c.cod===clienteCod);
+    if(idxPrincipal>=0) state.clientes[idxPrincipal].cod_vendedor=login;
+    // Sincroniza nas demais bases
+    ['clientesMes','clientesInativos','clientesCliVend'].forEach(base=>{
+      const b=state[base]||[];
+      const i=b.findIndex(c=>c.cod===clienteCod);
+      if(i>=0) b[i].cod_vendedor=login;
+    });
     saveState();
     const ok=document.getElementById('cmd-vend-ok');
     ok.classList.remove('hidden');
@@ -1800,7 +1811,7 @@ function filtrarCRM(lista, busca, filtro){
     const okF=filtro===''
       ||(filtro==='com'&&c.cod_vendedor)
       ||(filtro==='sem'&&!c.cod_vendedor)
-      ||(filtro==='inat'&&dias!==null&&dias>60)
+      ||(filtro==='inat'&&dias!==null&&dias>40)
       ||(filtro==='at'&&(dias===null||dias<=60));
     return okB&&okF;
   });
@@ -1829,7 +1840,7 @@ function renderClientes(){
   if(resumoEl){
     const totalV = state.clientes.reduce((s,c)=>s+(c.totalGeral||c.c1||0),0);
     const ativos = state.clientes.filter(c=>{const d=diasSemAtend(c);return d!==null&&d<=30;}).length;
-    const inat   = state.clientes.filter(c=>{const d=diasSemAtend(c);return d!==null&&d>30;}).length;
+    const inat   = state.clientes.filter(c=>{const d=diasSemAtend(c);return d!==null&&d>40;}).length;
     resumoEl.innerHTML=`
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:1rem">
         <div class="metric-card"><div class="metric-lbl">Total</div><div class="metric-val">${state.clientes.length}</div></div>
@@ -1853,7 +1864,7 @@ function renderInativos(){
   const busca = document.getElementById('busca-inat')?.value||'';
   // +31 dias sem compra
   const base  = [...state.clientes]
-    .filter(c=>{const d=diasSemAtend(c);return d!==null&&d>30;})
+    .filter(c=>{const d=diasSemAtend(c);return d!==null&&d>40;})
     .sort((a,b)=>(diasSemAtend(b)||0)-(diasSemAtend(a)||0));
   const lista = filtrarCRM(base, busca, '');
   renderCRMList(lista, document.getElementById('crm-lista-inat'), document.getElementById('inat-empty'), 'crm-res-inat', 'inat', true, 'inat');
@@ -1948,8 +1959,8 @@ function renderCliVend(){
   if(resumoEl && vendFiltro){
     const vendNome = sel?.options[sel.selectedIndex]?.text || '';
     const totalVend = lista.reduce((s,c)=>s+(c.totalGeral||c.c1||0),0);
-    const ativos    = lista.filter(c=>{ const d=diasSemAtend(c); return d!==null&&d<=30; }).length;
-    const inativos  = lista.filter(c=>{ const d=diasSemAtend(c); return d!==null&&d>31; }).length;
+    const ativos    = lista.filter(c=>{ const d=diasSemAtend(c); return d!==null&&d<=40; }).length;
+    const inativos  = lista.filter(c=>{ const d=diasSemAtend(c); return d!==null&&d>40; }).length;
     resumoEl.innerHTML=`
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
         <div class="metric-card"><div class="metric-lbl">Vendedor</div><div style="font-size:14px;font-weight:700;color:var(--brown)">${vendNome}</div></div>
@@ -2026,7 +2037,7 @@ function renderVClientes(){
   const filtro = document.getElementById('filtro-vcli')?.value||'';
 
   const at   = todos.filter(c=>{const d=diasSemAtend(c);return d!==null&&d<=30;}).length;
-  const inat = todos.filter(c=>{const d=diasSemAtend(c);return d!==null&&d>30;}).length;
+  const inat = todos.filter(c=>{const d=diasSemAtend(c);return d!==null&&d>40;}).length;
 
   const res = document.getElementById('crm-res-vcli');
   if(res) res.innerHTML=`
@@ -2038,7 +2049,7 @@ function renderVClientes(){
     if(busca && !(c.razao||c.nome||'').toLowerCase().includes(busca) && !(c.cod||'').includes(busca)) return false;
     const d=diasSemAtend(c);
     if(filtro==='at'   && !(d!==null&&d<=30)) return false;
-    if(filtro==='inat' && !(d!==null&&d>30))  return false;
+    if(filtro==='inat' && !(d!==null&&d>40))  return false;
     return true;
   });
 
@@ -2093,13 +2104,13 @@ function renderVInativos(){
   const inat = state.clientes
     .filter(c=>{
       if(!matchVendedor(c, login, nomeVend)) return false;
-      const d=diasSemAtend(c); return d!==null&&d>30;
+      const d=diasSemAtend(c); return d!==null&&d>40;
     })
     .sort((a,b)=>(diasSemAtend(b)||0)-(diasSemAtend(a)||0));
 
   const busca   = (document.getElementById('busca-vinat')?.value||'').toLowerCase().trim();
-  const d31     = inat.filter(c=>{const d=diasSemAtend(c);return d>30&&d<=60;}).length;
-  const d60     = inat.filter(c=>{const d=diasSemAtend(c);return d>60;}).length;
+  const d31     = inat.filter(c=>{const d=diasSemAtend(c);return d>40&&d<=40;}).length;
+  const d60     = inat.filter(c=>{const d=diasSemAtend(c);return d>40;}).length;
 
   const res = document.getElementById('crm-res-vinat');
   if(res) res.innerHTML=`
@@ -3172,7 +3183,7 @@ function renderLinks(){
       const normalize=s=>(s||'').toUpperCase().replace(/\s+/g,' ').trim();
       const match=c.cod_vendedor===v.login||normalize(c.vend_nome||'')===normalize(v.nome);
       if(!match) return false;
-      const d=diasSemAtend(c); return d!==null&&d>30;
+      const d=diasSemAtend(c); return d!==null&&d>40;
     }).length;
 
     return `<div style="margin-bottom:1rem;background:var(--white);border:1px solid var(--border);border-radius:12px;overflow:hidden">
@@ -3344,7 +3355,7 @@ function renderPainel(){
   const meusCli = state.clientes.filter(c=>matchVendedor(c, login, nomeVend));
   const totalCli  = meusCli.length;
   const ativos    = meusCli.filter(c=>{const d=diasSemAtend(c);return d!==null&&d<=30;}).length;
-  const inativos  = meusCli.filter(c=>{const d=diasSemAtend(c);return d!==null&&d>30;}).length;
+  const inativos  = meusCli.filter(c=>{const d=diasSemAtend(c);return d!==null&&d>40;}).length;
 
   // Ritmo
   const ritmodia  = dia>0 ? vendasMes/dia : 0;
