@@ -4024,7 +4024,7 @@ function parsePathweb(text){
           cod_vendedor:current.vend_cod,
           vend_cod:current.vend_cod,
           vend_nome:current.vend_nome,
-          tel:'', cnpj:'', pedidos:[]
+          tel:'', cnpj:'', cidade:'', pedidos:[], produtos:{}
         };
       }
       clientes[cod].pedidos.push({data:current.data, total:current.total, mes:current.mes});
@@ -4038,6 +4038,20 @@ function parsePathweb(text){
       const mes = current.mes;
       if(mes) vendTotais[vk].mesTotais[mes]=(vendTotais[vk].mesTotais[mes]||0)+current.total;
 
+      current.clienteCod = cod;
+    }
+    else if(current && current.clienteCod && tds[1] && /^\d+\s*-\s*[A-Za-z]/.test(tds[1])){
+      const mProd = tds[1].match(/^\d+\s*-\s*(.+)$/);
+      const cat = mProd ? mProd[1].trim().toUpperCase() : tds[1].toUpperCase();
+      const qtdStr = (tds[3]||'0').replace(/[^\d,.]/g,'').replace(',','.');
+      const qtdRaw = parseFloat(qtdStr) || 0;
+      const qtd = Math.round(qtdRaw / 10);
+      if(qtd > 0 && clientes[current.clienteCod]){
+        if(!clientes[current.clienteCod].produtos) clientes[current.clienteCod].produtos={};
+        clientes[current.clienteCod].produtos[cat]=(clientes[current.clienteCod].produtos[cat]||0)+qtd;
+      }
+    }
+    else if(current && current.clienteCod && ehLinhaPedido(tds)){
       current = null;
     }
   });
