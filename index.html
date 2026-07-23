@@ -302,7 +302,7 @@ tr:hover td{background:var(--cream)}
             <option value="">Todos os status</option>
             <option value="com">Com vendedor</option>
             <option value="sem">Sem vendedor</option>
-            <option value="inat">Inativos (+31d)</option>
+            <option value="inat">Inativos (+41d)</option>
             <option value="at">Ativos</option>
           </select>
           <button class="crm-sort-btn" id="sort-cli-dias" onclick="toggleSort('cli')">&#8595; Dias s/ atend.</button>
@@ -338,7 +338,7 @@ tr:hover td{background:var(--cream)}
           <select class="input" id="filtro-clivend-status" style="width:160px" onchange="renderCliVend()">
             <option value="">Todos os status</option>
             <option value="at">Ativos (≤30d)</option>
-            <option value="inat">Inativos (+31d)</option>
+            <option value="inat">Inativos (+41d)</option>
             <option value="sem">Sem data</option>
           </select>
           <button class="crm-sort-btn" id="sort-clivend-dias" onclick="toggleSort('clivend')">&#8595; Dias s/ atend.</button>
@@ -631,7 +631,7 @@ tr:hover td{background:var(--cream)}
           <input class="input" id="busca-vcli" placeholder="&#128269; Buscar nome, código..." style="flex:1;min-width:180px" oninput="renderVClientes()">
           <select class="input" id="filtro-vcli" style="width:160px" onchange="renderVClientes()">
             <option value="">Todos os status</option>
-            <option value="inat">Inativos (+31d)</option>
+            <option value="inat">Inativos (+41d)</option>
             <option value="at">Ativos</option>
           </select>
           <button class="crm-sort-btn" id="sort-vcli-dias" onclick="toggleSort('vcli')">&#8595; Dias s/ atend.</button>
@@ -752,11 +752,13 @@ if(typeof pdfjsLib !== 'undefined') pdfjsLib.GlobalWorkerOptions.workerSrc = 'ht
 
 // ======= STATE (localStorage para sincronização) =======
 const STORE_KEY = 'divinissima_v15';
+// Dados embutidos no HTML (gerados pelo botão "Exportar backup")
+const EMBEDDED_DATA = null; // <<EMBEDDED_DATA>>
 
 // ======= SINCRONIZAÇÃO NA NUVEM (Google Sheets) =======
 // URL fixa do Google Apps Script Web App — já configurada para TODOS os usuários
 // (admin e vendedores) que abrirem este arquivo, sem precisar configurar nada.
-const CLOUD_SYNC_URL_FIXA = 'https://script.google.com/macros/s/AKfycbwum4uF1VAr5caWDg25RF7rEV5w7LiPeZD78K6nfao2jIlq1vZ19bT8WuHanh3Uignivw/exec';
+const CLOUD_SYNC_URL_FIXA = 'https://script.google.com/macros/s/AKfycbwZP3jXJ_bJNOc6iw1BgJQpIaKcV-Wo0vGtJyGKtBDS8s83a-V440YyLfS13DxxKUHDYA/exec';
 const CLOUD_SYNC_URL = CLOUD_SYNC_URL_FIXA || localStorage.getItem('divinissima_cloud_url') || '';
 let cloudSyncAtivo = !!CLOUD_SYNC_URL;
 let ultimoSyncCloud = null;
@@ -871,6 +873,9 @@ async function buscarDaNuvem(somenteCheck){
 async function sincronizarComNuvem(forcarRender){
   if(!CLOUD_SYNC_URL) return;
   if(!navigator.onLine) return;
+  // Não restaura da nuvem se usuário limpou a base intencionalmente
+  const foiLimpo = localStorage.getItem('div_base_limpa') === '1';
+  if(foiLimpo && !forcarRender) return;
   if(window.location.protocol !== 'https:' && !window.location.hostname.includes('github.io')) return;
 
   // 1) Primeiro verifica o timestamp na nuvem (requisição leve)
@@ -886,11 +891,20 @@ async function sincronizarComNuvem(forcarRender){
   const dadosNuvem = await buscarDaNuvem(false);
   if(!dadosNuvem) return;
 
-  state = dadosNuvem;
-  localStorage.setItem(STORE_KEY, JSON.stringify(state));
-  localStorage.setItem('divinissima_last_sync', Date.now());
-  if(currentUser && typeof syncAll==='function') syncAll();
-  console.log('🔄 Dados atualizados da nuvem:', new Date().toLocaleTimeString('pt-BR'));
+  // Só atualiza se a nuvem tiver mais dados (evita sobrescrever importação recente com state vazio)
+  const clientesLocais=(state.clientes||[]).length;
+  const clientesNuvem=(dadosNuvem.clientes||[]).length;
+  const vendLocais=Object.keys(state.vendTotais||{}).length;
+  const vendNuvem=Object.keys(dadosNuvem.vendTotais||{}).length;
+  const nuvemTemMaisDados=clientesNuvem>clientesLocais||vendNuvem>vendLocais;
+  const metasMudou=JSON.stringify(dadosNuvem.vendedores)!==JSON.stringify(state.vendedores)||JSON.stringify(dadosNuvem.metas)!==JSON.stringify(state.metas);
+  if(nuvemTemMaisDados||(metasMudou&&clientesNuvem>=clientesLocais)||forcarRender){
+    state = dadosNuvem;
+    saveState();
+    localStorage.setItem('divinissima_last_sync', Date.now());
+    if(currentUser && typeof syncAll==='function') syncAll();
+    console.log('🔄 Dados atualizados da nuvem:', new Date().toLocaleTimeString('pt-BR'));
+  }
 }
 
 // Atualiza o indicador visual de sincronização
@@ -1029,8 +1043,50 @@ function loadState(){
   };
 }
 
+function exportarBackupHTML(){
+  try{
+    const htmlAtual = document.documentElement.outerHTML;
+    const dadosJSON = JSON.stringify(state);
+    const marcador = '// <<EMBEDDED_DATA>>';
+    const idxM = htmlAtual.indexOf(marcador);
+    let htmlComDados = htmlAtual;
+    if(idxM>=0){
+      const idxI = htmlAtual.lastIndexOf('const EMBEDDED_DATA =', idxM);
+      if(idxI>=0){
+        htmlComDados = htmlAtual.substring(0,idxI)
+          + 'const EMBEDDED_DATA = ' + dadosJSON + '; ' + marcador
+          + htmlAtual.substring(idxM + marcador.length);
+      }
+    }
+    const blob = new Blob([htmlComDados], {type:'text/html;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const hoje = new Date();
+    const data = hoje.getFullYear()+'-'+String(hoje.getMonth()+1).padStart(2,'0')+'-'+String(hoje.getDate()).padStart(2,'0');
+    a.download = 'Divinissima Semijoias backup '+data+'.html';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    const ok = document.getElementById('backup-ok');
+    if(ok){ ok.classList.remove('hidden'); setTimeout(()=>ok.classList.add('hidden'),3000); }
+  }catch(e){ alert('Erro ao gerar backup: '+e.message); }
+}
+
 function saveState(){
-  localStorage.setItem(STORE_KEY, JSON.stringify(state));
+  const _payload = JSON.stringify(state);
+  try{
+    localStorage.setItem(STORE_KEY, _payload);
+  }catch(e){
+    if(e.name==='QuotaExceededError'||e.name==='NS_ERROR_DOM_QUOTA_REACHED'||e.code===22){
+      try{
+        if(state.historicoImport&&state.historicoImport.length>3) state.historicoImport=state.historicoImport.slice(-3);
+        localStorage.setItem(STORE_KEY,JSON.stringify(state));
+      }catch(e2){
+        alert('⚠️ Memória local cheia!\nOs dados NÃO foram salvos.\nVá em Sincronização → Exportar backup.');
+        return false;
+      }
+    }
+  }
   notifySync();
   // Dispara evento para sincronizar outras abas do navegador
   try{ window.dispatchEvent(new StorageEvent('storage',{key:STORE_KEY})); }catch(e){}
@@ -1388,13 +1444,13 @@ function renderDashboard(){
   const alertEl=document.getElementById('dash-alertas');
   if(alertEl && inat31.length>0){
     const inat60   = inat31.filter(c=>{ const d=diasSemAtend(c); return d>40; }).length;
-    const inat31_60= inat31.length-inat60;
+    const inat41_60= inat31.length-inat60;
     alertEl.innerHTML=`
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
         <div style="background:#FFF3CD;border:1px solid #F0AD4E;border-radius:10px;padding:.75rem 1rem;display:flex;align-items:center;gap:10px">
           <span style="font-size:22px">⚠️</span>
-          <div><div style="font-size:13px;font-weight:700;color:#8A6D3B">${inat31_60} clientes entre 41–60 dias sem compra</div>
-          <div style="font-size:11px;color:#8A6D3B">Atenção — risco de inatividade</div></div>
+          <div><div style="font-size:13px;font-weight:700;color:#8A6D3B">${inat41_60} clientes entre 41–60 dias sem compra</div>
+          <div style="font-size:11px;color:#8A6D3B">Atenção — risco de inatividade (+40 dias)</div></div>
         </div>
         <div style="background:#F8D7DA;border:1px solid #F5C6CB;border-radius:10px;padding:.75rem 1rem;display:flex;align-items:center;gap:10px">
           <span style="font-size:22px">🔴</span>
@@ -1689,8 +1745,7 @@ function atribuirVendCRM(base, idx, login){
 // Retorna classe e ícone de status pelo nº de dias
 function statusInfo(dias){
   if(dias===null) return {cls:'cinza',ico:'cinza',txt:'Sem data'};
-  if(dias<=30)    return {cls:'verde', ico:'verde', txt:dias+'d'};
-  if(dias<=60)    return {cls:'laranja',ico:'laranja',txt:dias+'d'};
+  if(dias<=40)    return {cls:'verde', ico:'verde', txt:dias+'d'};
   return             {cls:'vermelho',ico:'vermelho',txt:dias+'d'};
 }
 
@@ -1777,30 +1832,47 @@ function salvarVendCrmDetalhe(){
   const arr=bases[crmDetalheBase];
   if(arr&&arr[crmDetalheIdx]){
     const clienteCod = arr[crmDetalheIdx].cod;
-    // Salva na base atual
-    arr[crmDetalheIdx].cod_vendedor=login;
-    // Sincroniza na base principal state.clientes (fonte da verdade)
+    // Atualiza em TODAS as bases (fonte da verdade = state.clientes)
     const idxPrincipal = state.clientes.findIndex(c=>c.cod===clienteCod);
     if(idxPrincipal>=0) state.clientes[idxPrincipal].cod_vendedor=login;
-    // Sincroniza nas demais bases
     ['clientesMes','clientesInativos','clientesCliVend'].forEach(base=>{
       const b=state[base]||[];
       const i=b.findIndex(c=>c.cod===clienteCod);
       if(i>=0) b[i].cod_vendedor=login;
     });
+    arr[crmDetalheIdx].cod_vendedor=login;
+    // Salva localmente e envia para nuvem (sincroniza todos os logins)
     saveState();
+    if(typeof enviarParaNuvem==='function') enviarParaNuvem();
     const ok=document.getElementById('cmd-vend-ok');
+    ok.textContent='✅ Vendedor atribuído e sincronizado!';
     ok.classList.remove('hidden');
-    setTimeout(()=>ok.classList.add('hidden'),2000);
-    // Atualiza lista
-    const renders={total:renderClientes,mes:renderClientesMes,inat:renderInativos};
+    setTimeout(()=>ok.classList.add('hidden'),3000);
+    // Atualiza todas as listas visíveis
+    const renders={total:renderClientes,mes:renderClientesMes,inat:renderInativos,clivend:renderCliVend};
     if(renders[crmDetalheBase]) renders[crmDetalheBase]();
+    renderDashboard();
   }
 }
 
 function atribuirVendCRMGlobal(baseKey, idx, login){
   const bases = {total:state.clientes, mes:state.clientesMes||[], inat:state.clientesInativos||[], clivend:state.clientesCliVend||[]};
-  if(bases[baseKey]){ bases[baseKey][idx].cod_vendedor=login; saveState(); }
+  if(bases[baseKey]){
+    const clienteCod = bases[baseKey][idx]?.cod;
+    bases[baseKey][idx].cod_vendedor=login;
+    // Sincroniza na base principal
+    if(clienteCod){
+      const ip=state.clientes.findIndex(c=>c.cod===clienteCod);
+      if(ip>=0) state.clientes[ip].cod_vendedor=login;
+      ['clientesMes','clientesInativos','clientesCliVend'].forEach(b=>{
+        const arr=state[b]||[];
+        const i=arr.findIndex(c=>c.cod===clienteCod);
+        if(i>=0) arr[i].cod_vendedor=login;
+      });
+    }
+    saveState();
+    if(typeof enviarParaNuvem==='function') enviarParaNuvem();
+  }
 }
 
 function filtrarCRM(lista, busca, filtro){
@@ -1839,13 +1911,13 @@ function renderClientes(){
   const resumoEl= document.getElementById('crm-res-cli');
   if(resumoEl){
     const totalV = state.clientes.reduce((s,c)=>s+(c.totalGeral||c.c1||0),0);
-    const ativos = state.clientes.filter(c=>{const d=diasSemAtend(c);return d!==null&&d<=30;}).length;
+    const ativos = state.clientes.filter(c=>{const d=diasSemAtend(c);return d!==null&&d<=40;}).length;
     const inat   = state.clientes.filter(c=>{const d=diasSemAtend(c);return d!==null&&d>40;}).length;
     resumoEl.innerHTML=`
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:1rem">
         <div class="metric-card"><div class="metric-lbl">Total</div><div class="metric-val">${state.clientes.length}</div></div>
         <div class="metric-card"><div class="metric-lbl">Ativos ≤30d</div><div class="metric-val" style="color:var(--ok)">${ativos}</div></div>
-        <div class="metric-card"><div class="metric-lbl">Inativos +31d</div><div class="metric-val" style="color:var(--err)">${inat}</div></div>
+        <div class="metric-card"><div class="metric-lbl">Inativos +41d</div><div class="metric-val" style="color:var(--err)">${inat}</div></div>
         <div class="metric-card"><div class="metric-lbl">Vendas total</div><div class="metric-val" style="color:var(--gold-d);font-size:16px">${fmt(totalV)}</div></div>
       </div>`;
   }
@@ -1946,8 +2018,8 @@ function renderCliVend(){
     // Filtro por status
     if(statusFilt){
       const dias = diasSemAtend(c);
-      if(statusFilt==='at'   && !(dias!==null && dias<=30)) return false;
-      if(statusFilt==='inat' && !(dias!==null && dias>31))  return false;
+      if(statusFilt==='at'   && !(dias!==null && dias<=40)) return false;
+      if(statusFilt==='inat' && !(dias!==null && dias>40))  return false;
       if(statusFilt==='sem'  && dias!==null)                return false;
     }
 
@@ -2036,19 +2108,19 @@ function renderVClientes(){
   const busca  = (document.getElementById('busca-vcli')?.value||'').toLowerCase().trim();
   const filtro = document.getElementById('filtro-vcli')?.value||'';
 
-  const at   = todos.filter(c=>{const d=diasSemAtend(c);return d!==null&&d<=30;}).length;
+  const at   = todos.filter(c=>{const d=diasSemAtend(c);return d!==null&&d<=40;}).length;
   const inat = todos.filter(c=>{const d=diasSemAtend(c);return d!==null&&d>40;}).length;
 
   const res = document.getElementById('crm-res-vcli');
   if(res) res.innerHTML=`
     <div class="crm-resumo-card"><div class="crm-resumo-val">${todos.length}</div><div class="crm-resumo-lbl">Total</div></div>
     <div class="crm-resumo-card"><div class="crm-resumo-val" style="color:#27AE60">${at}</div><div class="crm-resumo-lbl">Ativos ≤30d</div></div>
-    <div class="crm-resumo-card"><div class="crm-resumo-val" style="color:#E74C3C">${inat}</div><div class="crm-resumo-lbl">Inativos +31d</div></div>`;
+    <div class="crm-resumo-card"><div class="crm-resumo-val" style="color:#E74C3C">${inat}</div><div class="crm-resumo-lbl">Inativos +41d</div></div>`;
 
   const lista = todos.filter(c=>{
     if(busca && !(c.razao||c.nome||'').toLowerCase().includes(busca) && !(c.cod||'').includes(busca)) return false;
     const d=diasSemAtend(c);
-    if(filtro==='at'   && !(d!==null&&d<=30)) return false;
+    if(filtro==='at'   && !(d!==null&&d<=40)) return false;
     if(filtro==='inat' && !(d!==null&&d>40))  return false;
     return true;
   });
@@ -2061,7 +2133,7 @@ function renderVClientes(){
 
   listEl.innerHTML = lista.map(c=>{
     const dias  = diasSemAtend(c);
-    const ativo = dias!==null&&dias<=30;
+    const ativo = dias!==null&&dias<=40;
     const cor   = dias===null?'var(--text-m)':ativo?'#27AE60':dias<=60?'#E67E22':'#E74C3C';
     const bg    = dias===null?'var(--cream2)':ativo?'#d4edda':dias<=60?'#FFF3CD':'#f8d7da';
     const badge = dias===null?'Sem data':ativo?'🟢 Ativo':'🔴 '+dias+'d';
@@ -2212,19 +2284,31 @@ function parsePathweb(text){
     return m ? `${m[3]}-${m[2]}-${m[1]}` : '';
   };
 
+  // Linha de pedido: col0 numérico + data dd/mm/aaaa na col3 (mais robusto que exigir col1==='Cliente')
+  const ehLinhaPedido = tds => tds.length>=9 && /^\d+$/.test(tds[0]||'') && /^\d{2}\/\d{2}\/\d{4}/.test(tds[3]||'');
+
+  // Extrai faixa oficial DOC INICIAL/DOC FINAL da seção "TOTAL VENDAS" do resumo
+  let docIni=null,docFim=null;
+  for(let i=0;i<rows.length;i++){
+    const tds=[...rows[i].querySelectorAll('td,th')].map(td=>td.textContent.trim());
+    if(tds.length>=3&&tds[2]==='TOTAL VENDAS'&&tds[0]==='DOC INICIAL'){
+      const vals=rows[i+1]?[...rows[i+1].querySelectorAll('td,th')].map(td=>td.textContent.trim()):[];
+      if(vals.length>=2&&/^\d+$/.test(vals[0])&&/^\d+$/.test(vals[1])){docIni=parseInt(vals[0]);docFim=parseInt(vals[1]);}
+      break;
+    }
+  }
+
   // Primeiro passo: detectar o mês predominante do arquivo
   const contagemMes = {};
   rows.forEach(tr => {
     const tds = [...tr.querySelectorAll('td,th')].map(td=>td.textContent.trim());
-    if(!tds.length) return;
-    if(/^\d+$/.test(tds[0]) && tds[1]==='Cliente' && tds.length>=8){
-      const sit=(tds[8]||'').toLowerCase();
-      if(sit.includes('cancel')) return;
-      const datas=(tds[3]||'').match(/\d{2}\/\d{2}\/\d{4}/g)||[];
-      const dataPed=datas.length>0?pd(datas[0]):pd(tds[3]);
-      const mes=dataPed.substring(0,7);
-      if(mes) contagemMes[mes]=(contagemMes[mes]||0)+1;
-    }
+    if(!ehLinhaPedido(tds)) return;
+    const sit=(tds[8]||'').toLowerCase();
+    if(sit.includes('cancel')) return;
+    const datas=(tds[3]||'').match(/\d{2}\/\d{2}\/\d{4}/g)||[];
+    const dataPed=datas.length>0?pd(datas[0]):pd(tds[3]);
+    const mes=dataPed.substring(0,7);
+    if(mes) contagemMes[mes]=(contagemMes[mes]||0)+1;
   });
   // Mês com mais pedidos = mês do arquivo
   const mesPrincipal = Object.entries(contagemMes).sort((a,b)=>b[1]-a[1])[0]?.[0]||'';
@@ -2236,21 +2320,26 @@ function parsePathweb(text){
   rows.forEach(tr => {
     const tds = [...tr.querySelectorAll('td,th')].map(td => td.textContent.trim());
     if(!tds.length) return;
-    const c0=tds[0]||'', c1=tds[1]||'', c2=tds[2]||'';
+    const c1=tds[1]||'', c2=tds[2]||'';
 
-    if(/^\d+$/.test(c0) && c1==='Cliente' && tds.length>=8){
+    if(ehLinhaPedido(tds)){
+      const c0=tds[0]||'';
       const sit = (tds[8]||'').toLowerCase();
       if(sit.includes('cancel')){ current=null; return; }
       const m       = c2.match(/^(\d+)\s*-\s*(.+)$/);
       const datas   = (tds[3]||'').match(/\d{2}\/\d{2}\/\d{4}/g)||[];
       const dataPed = datas.length>0 ? pd(datas[0]) : pd(tds[3]);
       const mesPed  = dataPed.substring(0,7);
-      // Ignora pedidos com data_pedido fora do mês principal do arquivo
       if(mesPrincipal && mesPed && mesPed!==mesPrincipal){ current=null; return; }
-      // col[7] = Vlr.Total = valor faturado do pedido (Fechada)
-      // Pedidos Aberta têm col[7]=0 — ignorar
-      const vlr7 = pv(tds[7]);
-      if(vlr7===0){ current=null; return; }
+      // Dentro da faixa oficial de vendas: usa Vlr.Total mesmo se 0
+      // Fora da faixa: é devolução — subtrai Vlr.Liq
+      const docNum=parseInt(c0)||0;
+      const dentroDaFaixa=docIni!==null&&docNum>=docIni&&docNum<=docFim;
+      const vlrLiq6=pv(tds[6]);
+      let vlr7=pv(tds[7]);
+      if(dentroDaFaixa){/* valor real */}
+      else if(vlrLiq6>0){vlr7=-vlrLiq6;}
+      else{current=null;return;}
       current = {
         cod:   m?m[1]:c0,
         nome:  m?m[2].trim():c2,
@@ -2736,6 +2825,9 @@ function confirmImport(){
   document.getElementById('import-ok-msg').textContent =
     `${totalClientes} clientes de ${per?per.label:'—'} — ${adicionados} novos, ${atualizados} atualizados`;
   document.getElementById('import-ok').classList.remove('hidden');
+  // Lembrete de backup
+  const lemb = document.getElementById('import-backup-lembrete');
+  if(lemb) lemb.classList.remove('hidden');
   renderHistorico();
   syncAll();
   pendingImport = [];
@@ -3316,6 +3408,92 @@ function copyLink(id){
 }
 
 // ======= PAINEL VENDEDOR =======
+// ══════════════════════════════════════════════════════
+// Cálculo de dias úteis (exclui sáb, dom e feriados nacionais + MG)
+// ══════════════════════════════════════════════════════
+function getFeriadosAno(ano){
+  // Feriados fixos nacionais
+  const fixos=[
+    `${ano}-01-01`, // Confraternização
+    `${ano}-04-21`, // Tiradentes
+    `${ano}-05-01`, // Trabalho
+    `${ano}-09-07`, // Independência
+    `${ano}-10-12`, // N.Sra. Aparecida
+    `${ano}-11-02`, // Finados
+    `${ano}-11-15`, // Proclamação República
+    `${ano}-11-20`, // Consciência Negra
+    `${ano}-12-25`, // Natal
+  ];
+  // Páscoa (algoritmo de Meeus/Jones/Butcher)
+  function pascoa(y){
+    const a=y%19,b=Math.floor(y/100),cc=y%100;
+    const d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25);
+    const g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30;
+    const i=Math.floor(cc/4),k=cc%4,l=(32+2*e+2*i-h-k)%7;
+    const m=Math.floor((a+11*h+22*l)/451);
+    const mes=Math.floor((h+l-7*m+114)/31);
+    const dia=((h+l-7*m+114)%31)+1;
+    return new Date(y,mes-1,dia);
+  }
+  const p=pascoa(ano);
+  const addDias=(d,n)=>new Date(d.getTime()+n*86400000);
+  const fmt=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const moveis=[
+    fmt(addDias(p,-48)), // Carnaval seg
+    fmt(addDias(p,-47)), // Carnaval ter
+    fmt(addDias(p,-2)),  // Sexta-feira Santa
+    fmt(p),              // Páscoa
+    fmt(addDias(p,60)),  // Corpus Christi
+  ];
+  // Feriados estaduais MG + municipais Divinópolis
+  const mg=[
+    `${ano}-04-23`, // São Jorge (municipal MG)
+  ];
+  return new Set([...fixos,...moveis,...mg]);
+}
+
+function isDiaUtil(data){
+  const d = data instanceof Date ? data : new Date(data);
+  const dow = d.getDay(); // 0=dom, 6=sab
+  if(dow===0||dow===6) return false;
+  const feriados = getFeriadosAno(d.getFullYear());
+  const chave = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  return !feriados.has(chave);
+}
+
+// Dias úteis decorridos no mês até hoje (inclusive)
+function diasUteisDecorridos(ano, mes){
+  const hoje = new Date();
+  const limDia = (ano===hoje.getFullYear()&&mes===hoje.getMonth()+1) ? hoje.getDate() : new Date(ano,mes,0).getDate();
+  let count=0;
+  for(let d=1;d<=limDia;d++){
+    if(isDiaUtil(new Date(ano,mes-1,d))) count++;
+  }
+  return count;
+}
+
+// Dias úteis restantes no mês a partir de amanhã
+function diasUteisRestantes(ano, mes){
+  const hoje = new Date();
+  const totalDias = new Date(ano,mes,0).getDate();
+  const diaInicio = (ano===hoje.getFullYear()&&mes===hoje.getMonth()+1) ? hoje.getDate()+1 : 1;
+  let count=0;
+  for(let d=diaInicio;d<=totalDias;d++){
+    if(isDiaUtil(new Date(ano,mes-1,d))) count++;
+  }
+  return count;
+}
+
+// Total de dias úteis no mês
+function totalDiasUteisMes(ano, mes){
+  const totalDias = new Date(ano,mes,0).getDate();
+  let count=0;
+  for(let d=1;d<=totalDias;d++){
+    if(isDiaUtil(new Date(ano,mes-1,d))) count++;
+  }
+  return count;
+}
+
 function renderPainel(){
   if(!currentUser) return;
 
@@ -3354,12 +3532,12 @@ function renderPainel(){
   // Clientes do vendedor — match preciso via função central
   const meusCli = state.clientes.filter(c=>matchVendedor(c, login, nomeVend));
   const totalCli  = meusCli.length;
-  const ativos    = meusCli.filter(c=>{const d=diasSemAtend(c);return d!==null&&d<=30;}).length;
+  const ativos    = meusCli.filter(c=>{const d=diasSemAtend(c);return d!==null&&d<=40;}).length;
   const inativos  = meusCli.filter(c=>{const d=diasSemAtend(c);return d!==null&&d>40;}).length;
 
   // Ritmo
   const ritmodia  = dia>0 ? vendasMes/dia : 0;
-  const ritmosem  = ritmodia*7;
+  const ritmosem  = ritmodia*5;  // 5 dias úteis/semana
   const projecao  = vendasMes + ritmodia*diasRest;
   const meta      = v.meta||0;
   const falta     = meta>0 ? Math.max(0,meta-vendasMes) : 0;
@@ -3383,7 +3561,7 @@ function renderPainel(){
   // CABEÇALHO
   s('vp-avatar', initials(v.nome));
   s('vp-nome', v.nome);
-  s('vp-periodo-label', MESES[mes-1]+' de '+ano+' · Dia '+dia+'/'+diasMes);
+  s('vp-periodo-label', MESES[mes-1]+' de '+ano+' · Dia '+dia+' · '+diasUtil+'/'+diasMes+' dias úteis');
   s('vp-nivel-badge', nivelLabel||'Sem meta atingida');
   st('vp-nivel-badge',
     'padding:4px 12px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap;'+
@@ -3394,7 +3572,7 @@ function renderPainel(){
   s('vp-quadro1', [
     {ico:'👥', lbl:'Total clientes',  val:totalCli,       sub:'na carteira',    cor:'var(--brown)',  bg:'var(--gold-l)'},
     {ico:'🟢', lbl:'Ativos ≤30d',    val:ativos,         sub:'compraram recente', cor:'#27AE60',   bg:'#d4edda'},
-    {ico:'🔴', lbl:'Inativos +31d',  val:inativos,       sub:'sem compra',      cor:'#E74C3C',       bg:'#f8d7da'},
+    {ico:'🔴', lbl:'Inativos +41d',  val:inativos,       sub:'sem compra',      cor:'#E74C3C',       bg:'#f8d7da'},
     {ico:'💰', lbl:'Vendas do mês',  val:fmt(vendasMes), sub:pctMeta+'% da meta', cor:'var(--gold-d)',bg:'var(--cream)'},
   ].map(c=>`
     <div style="background:${c.bg};border-radius:10px;padding:14px 12px;text-align:center">
@@ -3427,24 +3605,32 @@ function renderPainel(){
   }).join(''));
 
   // ── QUADRO 2b: Ritmo ─────────────────────────────────────
+  const metaDia = diasMes>0?meta/diasMes:0;  // meta/dia útil
+  const metaSem = metaDia*5;  // 5 dias úteis/semana
+  const corDia  = ritmodia>0&&metaDia>0?(ritmodia>=metaDia?'#27AE60':'#E74C3C'):'var(--gold-d)';
+  const corSem  = ritmosem>0&&metaSem>0?(ritmosem>=metaSem?'#27AE60':'#E74C3C'):'var(--gold-d)';
+  const corMes  = vendasMes>0&&meta>0?(vendasMes>=meta?'#27AE60':'#E74C3C'):'var(--gold-d)';
   s('vp-ritmo', `
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px">
       <div style="background:var(--cream);border-radius:8px;padding:8px;text-align:center">
         <div style="font-size:10px;color:var(--text-m);margin-bottom:2px">DIA</div>
-        <div style="font-size:15px;font-weight:700;color:var(--gold-d)">${fmt(ritmodia)}</div>
+        <div style="font-size:15px;font-weight:700;color:${corDia}">${fmt(ritmodia)}</div>
+        ${meta>0?`<div style="font-size:9px;color:var(--text-m);margin-top:2px">meta ${fmt(metaDia)}</div>`:''}
       </div>
       <div style="background:var(--cream);border-radius:8px;padding:8px;text-align:center">
         <div style="font-size:10px;color:var(--text-m);margin-bottom:2px">SEMANA</div>
-        <div style="font-size:15px;font-weight:700;color:var(--gold-d)">${fmt(ritmosem)}</div>
+        <div style="font-size:15px;font-weight:700;color:${corSem}">${fmt(ritmosem)}</div>
+        ${meta>0?`<div style="font-size:9px;color:var(--text-m);margin-top:2px">meta ${fmt(metaSem)}</div>`:''}
       </div>
       <div style="background:var(--cream);border-radius:8px;padding:8px;text-align:center">
         <div style="font-size:10px;color:var(--text-m);margin-bottom:2px">MÊS</div>
-        <div style="font-size:15px;font-weight:700;color:var(--gold-d)">${fmt(vendasMes)}</div>
+        <div style="font-size:15px;font-weight:700;color:${corMes}">${fmt(vendasMes)}</div>
+        ${meta>0?`<div style="font-size:9px;color:var(--text-m);margin-top:2px">meta ${fmt(meta)}</div>`:''}
       </div>
     </div>
     ${meta>0&&falta>0?`<div style="background:#FFF3CD;border:1px solid #F0AD4E;border-radius:6px;padding:7px 10px;font-size:11px;color:#8A6D3B">
-      ⚡ Meta: precisa de <b>${fmt(ritmoNec)}/dia</b> nos próximos ${diasRest} dias
-    </div>`:'<div style="font-size:11px;color:var(--text-m)">'+diasRest+' dias restantes no mês</div>'}
+      ⚡ Meta: precisa de <b>${fmt(ritmoNec)}/dia útil</b> nos próximos ${diasRest} dias úteis
+    </div>`:'<div style="font-size:11px;color:var(--text-m)">'+diasRest+' dias úteis restantes</div>'}
   `);
 
   // ── GRÁFICO DE EVOLUÇÃO DO VENDEDOR ──
@@ -3598,19 +3784,31 @@ function parsePathweb(text){
     return m ? `${m[3]}-${m[2]}-${m[1]}` : '';
   };
 
+  // Linha de pedido: col0 numérico + data dd/mm/aaaa na col3 (mais robusto que exigir col1==='Cliente')
+  const ehLinhaPedido = tds => tds.length>=9 && /^\d+$/.test(tds[0]||'') && /^\d{2}\/\d{2}\/\d{4}/.test(tds[3]||'');
+
+  // Extrai faixa oficial DOC INICIAL/DOC FINAL da seção "TOTAL VENDAS" do resumo
+  let docIni=null,docFim=null;
+  for(let i=0;i<rows.length;i++){
+    const tds=[...rows[i].querySelectorAll('td,th')].map(td=>td.textContent.trim());
+    if(tds.length>=3&&tds[2]==='TOTAL VENDAS'&&tds[0]==='DOC INICIAL'){
+      const vals=rows[i+1]?[...rows[i+1].querySelectorAll('td,th')].map(td=>td.textContent.trim()):[];
+      if(vals.length>=2&&/^\d+$/.test(vals[0])&&/^\d+$/.test(vals[1])){docIni=parseInt(vals[0]);docFim=parseInt(vals[1]);}
+      break;
+    }
+  }
+
   // Primeiro passo: detectar o mês predominante do arquivo
   const contagemMes = {};
   rows.forEach(tr => {
     const tds = [...tr.querySelectorAll('td,th')].map(td=>td.textContent.trim());
-    if(!tds.length) return;
-    if(/^\d+$/.test(tds[0]) && tds[1]==='Cliente' && tds.length>=8){
-      const sit=(tds[8]||'').toLowerCase();
-      if(sit.includes('cancel')) return;
-      const datas=(tds[3]||'').match(/\d{2}\/\d{2}\/\d{4}/g)||[];
-      const dataPed=datas.length>0?pd(datas[0]):pd(tds[3]);
-      const mes=dataPed.substring(0,7);
-      if(mes) contagemMes[mes]=(contagemMes[mes]||0)+1;
-    }
+    if(!ehLinhaPedido(tds)) return;
+    const sit=(tds[8]||'').toLowerCase();
+    if(sit.includes('cancel')) return;
+    const datas=(tds[3]||'').match(/\d{2}\/\d{2}\/\d{4}/g)||[];
+    const dataPed=datas.length>0?pd(datas[0]):pd(tds[3]);
+    const mes=dataPed.substring(0,7);
+    if(mes) contagemMes[mes]=(contagemMes[mes]||0)+1;
   });
   // Mês com mais pedidos = mês do arquivo
   const mesPrincipal = Object.entries(contagemMes).sort((a,b)=>b[1]-a[1])[0]?.[0]||'';
@@ -3622,21 +3820,26 @@ function parsePathweb(text){
   rows.forEach(tr => {
     const tds = [...tr.querySelectorAll('td,th')].map(td => td.textContent.trim());
     if(!tds.length) return;
-    const c0=tds[0]||'', c1=tds[1]||'', c2=tds[2]||'';
+    const c1=tds[1]||'', c2=tds[2]||'';
 
-    if(/^\d+$/.test(c0) && c1==='Cliente' && tds.length>=8){
+    if(ehLinhaPedido(tds)){
+      const c0=tds[0]||'';
       const sit = (tds[8]||'').toLowerCase();
       if(sit.includes('cancel')){ current=null; return; }
       const m       = c2.match(/^(\d+)\s*-\s*(.+)$/);
       const datas   = (tds[3]||'').match(/\d{2}\/\d{2}\/\d{4}/g)||[];
       const dataPed = datas.length>0 ? pd(datas[0]) : pd(tds[3]);
       const mesPed  = dataPed.substring(0,7);
-      // Ignora pedidos com data_pedido fora do mês principal do arquivo
       if(mesPrincipal && mesPed && mesPed!==mesPrincipal){ current=null; return; }
-      // col[7] = Vlr.Total = valor faturado do pedido (Fechada)
-      // Pedidos Aberta têm col[7]=0 — ignorar
-      const vlr7 = pv(tds[7]);
-      if(vlr7===0){ current=null; return; }
+      // Dentro da faixa oficial de vendas: usa Vlr.Total mesmo se 0
+      // Fora da faixa: é devolução — subtrai Vlr.Liq
+      const docNum=parseInt(c0)||0;
+      const dentroDaFaixa=docIni!==null&&docNum>=docIni&&docNum<=docFim;
+      const vlrLiq6=pv(tds[6]);
+      let vlr7=pv(tds[7]);
+      if(dentroDaFaixa){/* valor real */}
+      else if(vlrLiq6>0){vlr7=-vlrLiq6;}
+      else{current=null;return;}
       current = {
         cod:   m?m[1]:c0,
         nome:  m?m[2].trim():c2,
@@ -4086,6 +4289,9 @@ function confirmImport(){
   document.getElementById('import-ok-msg').textContent =
     `${totalClientes} clientes de ${per?per.label:'—'} — ${adicionados} novos, ${atualizados} atualizados`;
   document.getElementById('import-ok').classList.remove('hidden');
+  // Lembrete de backup
+  const lemb = document.getElementById('import-backup-lembrete');
+  if(lemb) lemb.classList.remove('hidden');
   renderHistorico();
   syncAll();
   pendingImport = [];
@@ -4616,6 +4822,7 @@ function limparTudoBase(){
   state.clientesCliVend = [];
   state.historicoImport = [];
   state.vendTotais = {};
+  try{ localStorage.setItem('div_base_limpa','1'); }catch(e){}
   saveState();
   renderHistorico();
   syncAll();
