@@ -2972,8 +2972,14 @@ function confirmImport(){
     const vdState = state.vendTotais[vk];
     if(vd.vend_nome) vdState.vend_nome = vd.vend_nome;
     Object.entries(vd.mesTotais||{}).forEach(([mes,val])=>{
-      // Substitui o mês (não soma) — evita duplicar se reimportar o mesmo mês
-      vdState.mesTotais[mes] = val;
+      if(!per || mes===per.key){
+        // Mês principal do arquivo: substitui (evita duplicar se reimportar o mesmo mês)
+        vdState.mesTotais[mes] = val;
+      } else {
+        // Registro de outro mês dentro do mesmo arquivo (ex.: devolução/troca retroativa):
+        // soma, nunca sobrescreve um mês já fechado.
+        vdState.mesTotais[mes] = (vdState.mesTotais[mes]||0) + val;
+      }
     });
     // Recalcula total como soma de TODOS os meses acumulados
     vdState.total = Object.values(vdState.mesTotais).reduce((s,v)=>s+(v||0), 0);
@@ -2990,11 +2996,15 @@ function confirmImport(){
     // anoMes do arquivo sendo importado (ex: "2026-07")
     const anoMesNovo = novo.dtUltCompra ? novo.dtUltCompra.substring(0,7) : '';
 
-    const existente = novo.cod
-      ? state.clientes.find(c => c.cod === novo.cod)
-      : state.clientes.find(c =>
-          (c.razao||c.nome||'').toLowerCase() === (novo.razao||novo.nome||'').toLowerCase()
-        );
+    // Normaliza código e nome antes de comparar, para não perder o vínculo com um
+    // cliente já existente por causa de formatação levemente diferente entre arquivos.
+    const normCod0 = c => String(c==null?'':c).trim().replace(/^0+(?=\d)/,'');
+    const normNome0 = n => (n||'').trim().toLowerCase().replace(/\s+/g,' ');
+    const codNovo0 = normCod0(novo.cod);
+    const nomeNovo0 = normNome0(novo.razao||novo.nome);
+    const existente =
+      (codNovo0 && state.clientes.find(c => normCod0(c.cod)===codNovo0)) ||
+      (nomeNovo0 && state.clientes.find(c => normNome0(c.razao||c.nome)===nomeNovo0));
 
     if(existente){
       // Guarda histórico de compras por mês no cliente
@@ -4509,13 +4519,23 @@ function confirmImport(){
 
   let adicionados = 0, atualizados = 0;
 
-  // Merge vendTotais: substitui o mês importado (não soma) — evita duplicar em reimportação
+  // Merge vendTotais: substitui apenas o MÊS PRINCIPAL do arquivo importado (evita duplicar em reimportação)
+  // Um arquivo pode conter também linhas de Devolução/Troca datadas de um mês ANTERIOR
+  // (ex.: devolução em julho de uma venda de junho). Essas linhas NÃO podem sobrescrever
+  // um mês já fechado — por isso são somadas ao valor existente, nunca substituídas.
   if(!state.vendTotais) state.vendTotais = {};
   Object.entries(pendingVendTotais).forEach(([vk, vd])=>{
     if(!state.vendTotais[vk]) state.vendTotais[vk]={vend_nome:vd.vend_nome,vend_cod:vd.vend_cod,total:0,mesTotais:{}};
     if(vd.vend_nome) state.vendTotais[vk].vend_nome=vd.vend_nome;
     Object.entries(vd.mesTotais||{}).forEach(([mes,val])=>{
-      state.vendTotais[vk].mesTotais[mes]=val; // substitui, não soma
+      if(!per || mes===per.key){
+        // Mês principal do arquivo: substitui (evita duplicar em reimportação)
+        state.vendTotais[vk].mesTotais[mes]=val;
+      } else {
+        // Registro de outro mês dentro do mesmo arquivo (ex.: devolução/troca retroativa):
+        // soma, nunca sobrescreve um mês já fechado.
+        state.vendTotais[vk].mesTotais[mes]=(state.vendTotais[vk].mesTotais[mes]||0)+val;
+      }
     });
     // Recalcula total como soma de TODOS os meses acumulados
     state.vendTotais[vk].total=Object.values(state.vendTotais[vk].mesTotais).reduce((s,v)=>s+(v||0),0);
@@ -4550,9 +4570,16 @@ function confirmImport(){
       if(loginResolvido) novo.cod_vendedor = loginResolvido;
     }
 
-    const existente = novo.cod
-      ? state.clientes.find(c => c.cod === novo.cod)
-      : state.clientes.find(c => (c.razao||c.nome||'').toLowerCase() === (novo.razao||novo.nome||'').toLowerCase());
+    // Normaliza código (remove espaços/zeros à esquerda) e nome (trim) antes de comparar.
+    // Isso evita que um cliente já existente seja contado como "novo" só porque o código
+    // veio com formatação levemente diferente entre arquivos (ex.: "007" vs "7").
+    const normCod = c => String(c==null?'':c).trim().replace(/^0+(?=\d)/,'');
+    const normNome = n => (n||'').trim().toLowerCase().replace(/\s+/g,' ');
+    const codNovo = normCod(novo.cod);
+    const nomeNovo = normNome(novo.razao||novo.nome);
+    const existente =
+      (codNovo && state.clientes.find(c => normCod(c.cod)===codNovo)) ||
+      (nomeNovo && state.clientes.find(c => normNome(c.razao||c.nome)===nomeNovo));
 
     if(existente){
       // Desloca compras: novo c1 → c2 → c3
