@@ -396,7 +396,10 @@ tr:hover td{background:var(--cream)}
 
       <!-- == CRM (KANBAN) — compartilhado admin/vendedor == -->
       <div id="p-crm" class="hidden">
-        <div class="section-title"><span class="ico">&#128203;</span> CRM</div>
+        <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+          <span><span class="ico">&#128203;</span> CRM</span>
+          <input class="input" id="kb-busca" placeholder="&#128269; Buscar cliente pelo nome..." style="max-width:280px" oninput="renderCRM()">
+        </div>
         <div id="crm-kb-admin-resumo"></div>
         <div class="kb-board" id="kb-board"></div>
       </div>
@@ -2278,28 +2281,46 @@ function renderCRM(){
     colConc  = colConc.filter(c=>c.crmVendedorLogin===login);
   }
 
+  // ── Busca por nome (campo no cabeçalho) — filtra as 6 colunas juntas ──
+  const buscaEl = document.getElementById('kb-busca');
+  const busca = (buscaEl?.value||'').trim().toLowerCase();
+  let colInativosF=colInativos, col31_40F=col31_40, colAtivosF=colAtivos, colAtendF=colAtend, colOrcF=colOrc, colConcF=colConc;
+  if(busca){
+    const okBusca = c => (c.razao||c.nome||'').toLowerCase().includes(busca) || (c.cod||'').toLowerCase().includes(busca);
+    colInativosF = colInativos.filter(okBusca);
+    col31_40F    = col31_40.filter(okBusca);
+    colAtivosF   = colAtivos.filter(okBusca);
+    colAtendF    = colAtend.filter(okBusca);
+    colOrcF      = colOrc.filter(okBusca);
+    colConcF     = colConc.filter(okBusca);
+  }
+
   const totalEmpresa = kbTotalEmpresa();
   const cols=[
-    {id:'inativos',    titulo:'Clientes Inativos', sub:'+ 40 dias sem compra', lista:colInativos, auto:true},
-    {id:'d31_40',      titulo:'31 a 40 dias',       sub:'risco de inatividade', lista:col31_40,    auto:true},
-    {id:'ativos',      titulo:'Clientes Ativos',    sub:'até 30 dias',         lista:colAtivos,   auto:true},
-    {id:'atendimento', titulo:'Em Atendimento',     sub:'',                    lista:colAtend,    auto:false},
-    {id:'orcamento',   titulo:'Orçamento',          sub:'',                    lista:colOrc,      auto:false},
-    {id:'concluido',   titulo:'Concluído',          sub:'',                    lista:colConc,     auto:false},
+    {id:'inativos',    titulo:'Clientes Inativos', sub:'+ 40 dias sem compra', lista:colInativos, listaExibir:colInativosF, auto:true},
+    {id:'d31_40',      titulo:'31 a 40 dias',       sub:'risco de inatividade', lista:col31_40,    listaExibir:col31_40F,    auto:true},
+    {id:'ativos',      titulo:'Clientes Ativos',    sub:'até 30 dias',         lista:colAtivos,   listaExibir:colAtivosF,   auto:true},
+    {id:'atendimento', titulo:'Em Atendimento',     sub:'',                    lista:colAtend,    listaExibir:colAtendF,    auto:false},
+    {id:'orcamento',   titulo:'Orçamento',          sub:'',                    lista:colOrc,      listaExibir:colOrcF,      auto:false},
+    {id:'concluido',   titulo:'Concluído',          sub:'',                    lista:colConc,     listaExibir:colConcF,     auto:false},
   ];
 
   const board = document.getElementById('kb-board');
   if(board){
     board.innerHTML = cols.map(col=>{
+      // Soma/porcentagem/contador sempre refletem a coluna INTEIRA (métrica
+      // real); a busca só filtra quais cartões aparecem, não os números.
       const soma = col.lista.reduce((s,c)=>s+kbValorCliente(c),0);
       const pct  = kbPct(soma, totalEmpresa);
-      const cards = col.lista.length===0
-        ? `<div class="kb-empty-col">Nenhum cliente</div>`
-        : col.lista.map(c=>{
+      const cards = col.listaExibir.length===0
+        ? `<div class="kb-empty-col">${busca?'Nenhum resultado':'Nenhum cliente'}</div>`
+        : col.listaExibir.map(c=>{
             const idx = state.clientes.indexOf(c);
             const vendLbl = c.crmVendedorLogin ? (getVendedorNome(c.crmVendedorLogin)||c.crmVendedorLogin) : '';
             return `<div class="kb-card" draggable="true" data-idx="${idx}"
-                ondragstart="kbDragStart(event)" ondragend="kbDragEnd(event)" title="${(c.razao||c.nome||'').replace(/"/g,'')}">
+                ondragstart="kbDragStart(event)" ondragend="kbDragEnd(event)"
+                onclick="kbAbrirDetalheCard(${idx}, ${isAdmin})"
+                title="${(c.razao||c.nome||'').replace(/"/g,'')}">
               <div class="kb-card-nome">${c.razao||c.nome||'—'}</div>
               <div class="kb-card-val">${fmt(kbValorCliente(c))}</div>
               ${vendLbl?`<div class="kb-card-vend">&#128100; ${vendLbl}</div>`:''}
@@ -2390,6 +2411,14 @@ function kbDrop(e){
   const cliente = state.clientes[idx];
   if(!cliente) return;
   kbMoverCliente(cliente, idx, destino);
+}
+
+// Abre o mesmo modal de detalhe (últimas compras + ranking de produtos)
+// usado nas outras telas, a partir de um card do CRM.
+function kbAbrirDetalheCard(idx, isAdmin){
+  const c = state.clientes[idx];
+  if(!c) return;
+  openCrmDetalhe(c, idx, 'crm', isAdmin);
 }
 
 function kbMoverCliente(cliente, idx, destino){
@@ -2769,10 +2798,10 @@ function salvarTodosCampos(){
 
   // Atualiza listas conforme o tipo de usuário
   if(currentUser && currentUser.tipo==='admin'){
-    const renders={total:renderClientes,mes:renderClientesMes,inat:renderInativos,clivend:renderCliVend};
+    const renders={total:renderClientes,mes:renderClientesMes,inat:renderInativos,clivend:renderCliVend,crm:renderCRM};
     if(renders[crmDetalheBase]) renders[crmDetalheBase]();
   } else {
-    const renders={total:renderVClientes,mes:renderVClientesMes,inat:renderVInativos};
+    const renders={total:renderVClientes,mes:renderVClientesMes,inat:renderVInativos,crm:renderCRM};
     if(renders[crmDetalheBase]) renders[crmDetalheBase]();
     renderPainel();
   }
@@ -2810,11 +2839,11 @@ function _salvarVendLegacy(){
 
   // Atualiza apenas a lista correta e o painel do usuário atual
   if(currentUser && currentUser.tipo==='admin'){
-    const renders={total:renderClientes,mes:renderClientesMes,inat:renderInativos,clivend:renderCliVend};
+    const renders={total:renderClientes,mes:renderClientesMes,inat:renderInativos,clivend:renderCliVend,crm:renderCRM};
     if(renders[crmDetalheBase]) renders[crmDetalheBase]();
   } else {
     // Vendedor: atualiza apenas o próprio painel e listas de vendedor
-    const renders={total:renderVClientes,mes:renderVClientesMes,inat:renderVInativos};
+    const renders={total:renderVClientes,mes:renderVClientesMes,inat:renderVInativos,crm:renderCRM};
     if(renders[crmDetalheBase]) renders[crmDetalheBase]();
     renderPainel();
   }
@@ -5365,18 +5394,15 @@ function confirmImport(){
       (nomeNovo && state.clientes.find(c => normNome(c.razao||c.nome)===nomeNovo));
 
     if(existente){
-      // Desloca compras: novo c1 → c2 → c3
-      existente.c3 = existente.c2 || 0;
-      existente.c2 = existente.c1 || 0;
-      existente.c1 = novo.c1 || 0;
-      // Acumula totalGeral somando histórico
-      // Atualiza comprasMes e recalcula totalGeral corretamente
+      // Acumula totalGeral somando histórico e desloca compras 1→2→3 —
+      // só quando o mês importado é realmente NOVO (evita deslocar duas
+      // vezes na mesma importação, que embaralhava/duplicava os valores
+      // de Compra 1/2/3 exibidos no detalhe do cliente).
       if(!existente.comprasMes) existente.comprasMes={};
       const anoMesNovo2 = novo.dtUltCompra ? novo.dtUltCompra.substring(0,7) : '';
       if(anoMesNovo2){
         existente.comprasMes[anoMesNovo2] = novo.totalGeral || novo.c1 || 0;
         existente.totalGeral = Object.values(existente.comprasMes).reduce((s,v)=>s+(v||0),0);
-        // Atualiza c1/c2/c3
         const ultimoMes2 = existente._ultimoMesImportado||'';
         if(anoMesNovo2!==ultimoMes2){
           existente.c3=existente.c2||0; existente.c2=existente.c1||0;
