@@ -6015,59 +6015,70 @@ function loadLogo(){
 window.onload=async function(){
   ['divinissima_v1','divinissima_v2','divinissima_v3','divinissima_v4','divinissima_v5','divinissima_v6','divinissima_v7','divinissima_v8','divinissima_v9','divinissima_v10','divinissima_v11','divinissima_v12','divinissima_v13','divinissima_v14'].forEach(k=>localStorage.removeItem(k));
   loadLogo();
-  // state em memória
-  // Ao abrir: busca dados frescos da nuvem (apenas se HTTPS e online)
-  const podeConectarNuvem = CLOUD_SYNC_URL && navigator.onLine &&
-    (window.location.protocol === 'https:' || window.location.hostname.includes('github.io'));
-  if(podeConectarNuvem){
-    atualizarStatusSync('buscando');
-    try{
-      const dadosNuvem = await buscarDaNuvem(false);
-      if(dadosNuvem){
-        // NUNCA sobrescreve dados locais com dados da nuvem se o local já
-        // tem igual ou mais informação — só restaura da nuvem se o local
-        // estiver vazio ou se a nuvem realmente tiver mais dados.
-        const clientesLocais = (state.clientes||[]).length;
-        const clientesNuvem  = (dadosNuvem.clientes||[]).length;
-        const vendLocais     = Object.keys(state.vendTotais||{}).length;
-        const vendNuvem      = Object.keys(dadosNuvem.vendTotais||{}).length;
-        const semDadosLocaisAgora = clientesLocais===0 && vendLocais===0;
-        const nuvemTemMaisOuIgual = clientesNuvem >= clientesLocais && vendNuvem >= vendLocais;
 
-        if(semDadosLocaisAgora || nuvemTemMaisOuIgual){
-          state = dadosNuvem;
-          localStorage.setItem(STORE_KEY, JSON.stringify(state));
-          localStorage.setItem('divinissima_last_sync', Date.now());
-          console.log('✅ Dados carregados da nuvem ao iniciar');
-          atualizarStatusSync('ok');
-        } else {
-          // A nuvem devolveu dados, mas MENOS do que já existe localmente —
-          // mantém o que está no computador e não sobrescreve.
-          console.warn('⚠️ Nuvem tinha menos dados que o local — mantido o local (nuvem:',
-            clientesNuvem, 'clientes / local:', clientesLocais, 'clientes)');
-          atualizarStatusSync('ok');
-          kbAlertar('A nuvem tinha menos clientes ('+clientesNuvem+') que este computador ('+clientesLocais+'). Os dados locais foram mantidos com segurança.', 'aviso', 'window.onload');
-        }
-      } else {
-        // A nuvem respondeu, mas sem dados aproveitáveis — não é "sincronizado",
-        // é local mesmo, então o indicador precisa refletir isso.
-        console.warn('⚠️ Busca na nuvem não retornou dados ao iniciar');
-        atualizarStatusSync('local');
-      }
-    }catch(e){
-      console.warn('Falha ao buscar nuvem no início:', e);
-      atualizarStatusSync('erro');
-      kbAlertar('Não foi possível conectar com a nuvem ao abrir o sistema. Verifique sua internet.', 'erro', 'window.onload');
-    }
-  } else {
-    atualizarStatusSync(CLOUD_SYNC_URL ? 'local' : 'local');
-  }
-
+  // A tela de login aparece IMEDIATAMENTE, sem esperar a nuvem — a busca na
+  // nuvem roda em segundo plano logo abaixo. Isso evita que uma rede lenta
+  // ou instável deixe a pessoa sem conseguir nem ver o formulário de login.
   if(!checkURLLogin()){
     document.getElementById('screen-login').style.display='flex';
     document.getElementById('screen-app').classList.add('hidden');
     setTimeout(()=>{ const el=document.getElementById('lu'); if(el) el.focus(); }, 100);
   }
+
+  // state em memória
+  // Ao abrir: busca dados frescos da nuvem em segundo plano (apenas se
+  // HTTPS e online) — não bloqueia a tela de login.
+  const podeConectarNuvem = CLOUD_SYNC_URL && navigator.onLine &&
+    (window.location.protocol === 'https:' || window.location.hostname.includes('github.io'));
+  (async function(){
+    if(podeConectarNuvem){
+      atualizarStatusSync('buscando');
+      try{
+        const dadosNuvem = await buscarDaNuvem(false);
+        if(dadosNuvem){
+          // NUNCA sobrescreve dados locais com dados da nuvem se o local já
+          // tem igual ou mais informação — só restaura da nuvem se o local
+          // estiver vazio ou se a nuvem realmente tiver mais dados.
+          const clientesLocais = (state.clientes||[]).length;
+          const clientesNuvem  = (dadosNuvem.clientes||[]).length;
+          const vendLocais     = Object.keys(state.vendTotais||{}).length;
+          const vendNuvem      = Object.keys(dadosNuvem.vendTotais||{}).length;
+          const semDadosLocaisAgora = clientesLocais===0 && vendLocais===0;
+          const nuvemTemMaisOuIgual = clientesNuvem >= clientesLocais && vendNuvem >= vendLocais;
+
+          if(semDadosLocaisAgora || nuvemTemMaisOuIgual){
+            state = dadosNuvem;
+            localStorage.setItem(STORE_KEY, JSON.stringify(state));
+            localStorage.setItem('divinissima_last_sync', Date.now());
+            console.log('✅ Dados carregados da nuvem ao iniciar');
+            atualizarStatusSync('ok');
+            // Se a pessoa já estiver logada (ex.: link direto de vendedor),
+            // atualiza a tela na hora com o dado mais recente.
+            if(currentUser && typeof syncAll==='function') syncAll();
+          } else {
+            // A nuvem devolveu dados, mas MENOS do que já existe localmente —
+            // mantém o que está no computador e não sobrescreve.
+            console.warn('⚠️ Nuvem tinha menos dados que o local — mantido o local (nuvem:',
+              clientesNuvem, 'clientes / local:', clientesLocais, 'clientes)');
+            atualizarStatusSync('ok');
+            kbAlertar('A nuvem tinha menos clientes ('+clientesNuvem+') que este computador ('+clientesLocais+'). Os dados locais foram mantidos com segurança.', 'aviso', 'window.onload');
+          }
+        } else {
+          // A nuvem respondeu, mas sem dados aproveitáveis — não é "sincronizado",
+          // é local mesmo, então o indicador precisa refletir isso.
+          console.warn('⚠️ Busca na nuvem não retornou dados ao iniciar');
+          atualizarStatusSync('local');
+        }
+      }catch(e){
+        console.warn('Falha ao buscar nuvem no início:', e);
+        atualizarStatusSync('erro');
+        kbAlertar('Não foi possível conectar com a nuvem ao abrir o sistema. Verifique sua internet.', 'erro', 'window.onload');
+      }
+    } else {
+      atualizarStatusSync(CLOUD_SYNC_URL ? 'local' : 'local');
+    }
+  })();
+
   // Polling local: sincroniza state a cada 5s (mesma máquina/navegador)
   setInterval(()=>{
     if(!currentUser) return;
