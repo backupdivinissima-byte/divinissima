@@ -634,6 +634,20 @@ tr:hover td{background:var(--cream)}
       <div id="p-sync" class="hidden">
         <div class="section-title"><span class="ico">&#9729;</span> Sincronização em Nuvem</div>
 
+        <div class="card" style="margin-bottom:1.25rem;background:#fff;border:2px solid var(--gold-d)">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:.5rem">
+            <span style="font-size:22px">💾</span>
+            <div style="font-size:14px;font-weight:700;color:var(--brown)">Backup manual — sua rede de segurança</div>
+          </div>
+          <p style="font-size:13px;color:var(--text-s);margin:0 0 .75rem 0">
+            Baixa um arquivo <b>.html</b> com todos os dados de hoje (clientes, vendas, metas, CRM) embutidos dentro dele.
+            Guarde esse arquivo — se qualquer coisa der errado no futuro, ele é a garantia de que nada se perde.
+            Recomendado antes de qualquer atualização do sistema.
+          </p>
+          <button class="btn btn-primary btn-sm" onclick="exportarBackupHTML()">💾 Baixar backup completo agora</button>
+          <div id="backup-ok" class="hidden alert-ok" style="margin-top:.75rem">✅ Backup baixado com sucesso!</div>
+        </div>
+
         <div class="card" style="margin-bottom:1.25rem;background:linear-gradient(135deg,var(--cream),var(--gold-l));border-color:var(--gold)">
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:.75rem">
             <span style="font-size:22px">☁️</span>
@@ -669,6 +683,18 @@ tr:hover td{background:var(--cream)}
             <button class="btn btn-sm" onclick="forcarSyncAgora()">🔄 Forçar sincronização agora</button>
             <button class="btn btn-sm btn-danger" onclick="desativarSyncNuvem()">🚫 Desativar nuvem</button>
           </div>
+        </div>
+
+        <div class="card" style="margin-top:1.25rem">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.75rem">
+            <div style="font-size:13px;font-weight:700;color:var(--brown)">🔎 Integridade dos dados</div>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-sm" onclick="kbAutoCorrigirDados(); kbRenderIntegridade();">🛠️ Corrigir agora</button>
+              <button class="btn btn-sm" onclick="kbRenderIntegridade()">🔄 Verificar agora</button>
+            </div>
+          </div>
+          <div style="font-size:11px;color:var(--text-m);margin-bottom:.75rem">O robô confere automaticamente clientes duplicados (por código), informação essencial faltando, e clientes no CRM sem vendedor vinculado — e já corrige sozinho o que for seguro corrigir (duplicados por código e inconsistências de CRM), toda vez que algo é salvo.</div>
+          <div id="kb-integridade"></div>
         </div>
 
         <div class="card" style="margin-top:1.25rem">
@@ -941,6 +967,7 @@ async function enviarParaNuvem(){
     const resp = await fetch(CLOUD_SYNC_URL,{method:'POST',mode:'cors',headers:{'Content-Type':'text/plain;charset=utf-8'},body});
     if(resp.ok){
       ultimoSyncCloud=ts;
+      state.timestamp = ts;
       localStorage.setItem('divinissima_last_sync',String(ts));
       atualizarStatusSync('ok');
       return true;
@@ -950,6 +977,7 @@ async function enviarParaNuvem(){
     try{
       await fetch(CLOUD_SYNC_URL,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain;charset=utf-8'},body});
       ultimoSyncCloud=ts;
+      state.timestamp = ts;
       localStorage.setItem('divinissima_last_sync',String(ts));
       atualizarStatusSync('ok');
       return true;
@@ -1069,17 +1097,19 @@ async function sincronizarComNuvem(forcarRender){
   const vendNuvem = Object.keys(dadosNuvem.vendTotais||{}).length;
   const nuvemTemAlgumDado = clientesNuvem > 0 || vendNuvem > 0;
 
-  // Só restaura da nuvem se: (sem dados locais E a nuvem realmente tem algo)
-  // OU a nuvem tem mais dados que o local.
-  // NUNCA sobrescreve dados locais com dados da nuvem se local tem mais clientes,
-  // e NUNCA "restaura" uma nuvem igualmente vazia (isso cria um loop: vazio
-  // confirma vazio, salva de novo, reenvia vazio para a nuvem, repete para sempre).
+  // Se chegamos até aqui com dados locais já existentes, é porque a nuvem
+  // JÁ PROVOU ser mais recente (checagem de timestamp lá em cima). Não
+  // exigimos mais que a quantidade de clientes tenha aumentado — uma
+  // mudança de status no CRM (ex.: mover um cliente para "Orçamento") não
+  // muda a quantidade, mas é uma atualização real que precisa chegar em
+  // todos os logins. A única proteção que mantemos é contra o caso extremo
+  // de a nuvem "zerar" os clientes enquanto o local tem dados de verdade —
+  // foi exatamente essa situação que causou o incidente anterior.
+  const quedaSuspeita = clientesLocais > 0 && clientesNuvem === 0;
   const metasMudou = JSON.stringify(dadosNuvem.vendedores)!==JSON.stringify(state.vendedores)||
                      JSON.stringify(dadosNuvem.metas)!==JSON.stringify(state.metas);
-  const nuvemTemMaisDados = clientesNuvem > clientesLocais ||
-                            (vendNuvem > vendLocais && clientesNuvem >= clientesLocais);
 
-  const deveRestaurar = (semDadosLocais && nuvemTemAlgumDado) || nuvemTemMaisDados;
+  const deveRestaurar = (semDadosLocais && nuvemTemAlgumDado) || (!semDadosLocais && !quedaSuspeita);
 
   if(deveRestaurar || (metasMudou && clientesNuvem >= clientesLocais && nuvemTemAlgumDado)){
     state = dadosNuvem;
@@ -1087,10 +1117,10 @@ async function sincronizarComNuvem(forcarRender){
     localStorage.setItem('divinissima_last_sync', Date.now());
     if(currentUser && typeof syncAll==='function') syncAll();
     console.log('🔄 Sync nuvem:', clientesNuvem, 'clientes', new Date().toLocaleTimeString('pt-BR'));
-  } else if(!semDadosLocais && clientesNuvem < clientesLocais){
-    // O robô impediu uma sobrescrita que reduziria os dados locais — avisa,
+  } else if(quedaSuspeita){
+    // O robô impediu uma sobrescrita que zeraria os dados locais — avisa,
     // sem bloquear o uso do sistema, para que fique registrado e visível.
-    kbAlertar('A nuvem tinha menos clientes ('+clientesNuvem+') que este computador ('+clientesLocais+'). Os dados locais foram mantidos com segurança.', 'aviso', 'sincronizarComNuvem');
+    kbAlertar('A nuvem estava sem clientes, mas este computador tem '+clientesLocais+'. Os dados locais foram mantidos com segurança.', 'aviso', 'sincronizarComNuvem');
   }
 }
 
@@ -1282,6 +1312,132 @@ window.addEventListener('unhandledrejection', function(ev){
 
 // Painel para o admin revisar o histórico de erros/avisos capturados
 // neste computador (o log é local a cada dispositivo).
+// ═══════════════════════════════════════════════════════════
+// CHECAGEM DE INTEGRIDADE DE DADOS
+// Roda depois de toda alteração salva (local ou vinda da nuvem) e também
+// periodicamente. Detecta: clientes duplicados (por código ou nome),
+// informação essencial faltando, e inconsistências no CRM (cliente com
+// estágio mas sem vendedor vinculado). Avisa só quando a lista de
+// problemas MUDA, para não repetir o mesmo aviso a cada save.
+// ═══════════════════════════════════════════════════════════
+let kbUltimaAssinaturaIntegridade = '';
+
+// ═══════════════════════════════════════════════════════════
+// AUTOCORREÇÃO AUTÔNOMA DE DADOS
+// O robô corrige sozinho, dentro do sistema (sem precisar de HTML novo):
+// 1) Clientes duplicados pelo MESMO código — mescla o histórico de compras
+//    no registro mais completo e remove a cópia, sem perder nenhum valor.
+// 2) Cliente no CRM com estágio manual mas sem vendedor vinculado (estado
+//    inconsistente) — devolve para a classificação automática (pool).
+// O que o robô NÃO faz sozinho: mesclar por NOME (risco de juntar dois
+// clientes diferentes que só coincidem no nome) e inventar código/nome que
+// não existem — esses casos continuam só sendo sinalizados para revisão.
+// Toda correção fica registrada no histórico, nada acontece "escondido".
+// ═══════════════════════════════════════════════════════════
+let kbCorrigindoAgora = false;
+
+function kbAutoCorrigirDados(){
+  if(kbCorrigindoAgora) return [];
+  if(!state.clientes || state.clientes.length===0) return [];
+  kbCorrigindoAgora = true;
+  const acoes = [];
+  try{
+    // 1) Mescla duplicados pelo mesmo código
+    const porCod = {};
+    state.clientes.forEach((c,i)=>{ if(c.cod) (porCod[c.cod]=porCod[c.cod]||[]).push(i); });
+    const idxParaRemover = new Set();
+    Object.entries(porCod).forEach(([cod, idxs])=>{
+      if(idxs.length<2) return;
+      const ordenados = idxs.slice().sort((a,b)=>
+        Object.keys(state.clientes[b].comprasMes||{}).length - Object.keys(state.clientes[a].comprasMes||{}).length
+      );
+      const principal = state.clientes[ordenados[0]];
+      for(let k=1;k<ordenados.length;k++){
+        const dup = state.clientes[ordenados[k]];
+        principal.comprasMes = principal.comprasMes||{};
+        Object.entries(dup.comprasMes||{}).forEach(([mes,val])=>{
+          if(!(mes in principal.comprasMes)) principal.comprasMes[mes]=val;
+        });
+        principal.totalGeral = Object.values(principal.comprasMes).reduce((s,v)=>s+(v||0),0);
+        ['tel','cnpj','cidade','uf','vend_nome','cod_vendedor'].forEach(f=>{
+          if(!principal[f] && dup[f]) principal[f]=dup[f];
+        });
+        if(dup.dtUltCompra && (!principal.dtUltCompra || dup.dtUltCompra>principal.dtUltCompra)) principal.dtUltCompra=dup.dtUltCompra;
+        idxParaRemover.add(ordenados[k]);
+        acoes.push('Mesclado cliente duplicado (código '+cod+'): "'+(dup.razao||dup.nome||'—')+'" unido a "'+(principal.razao||principal.nome||'—')+'"');
+      }
+    });
+    if(idxParaRemover.size>0) state.clientes = state.clientes.filter((c,i)=>!idxParaRemover.has(i));
+
+    // 2) Cliente no CRM com estágio manual mas sem vendedor — libera pro pool
+    state.clientes.forEach(c=>{
+      if((c.crmStage==='atendimento'||c.crmStage==='orcamento'||c.crmStage==='concluido') && !c.crmVendedorLogin){
+        acoes.push('Cliente "'+(c.razao||c.nome||'—')+'" estava em "'+c.crmStage+'" sem vendedor vinculado — devolvido para a classificação automática do CRM');
+        c.crmStage = null; c.crmOrcamentoValor = null; delete c.crmStageChangedAt;
+      }
+    });
+
+    if(acoes.length>0){
+      saveState();
+      acoes.forEach(a=>kbRegistrarErro(a, 'Autocorreção automática'));
+      kbToast('O robô corrigiu automaticamente '+acoes.length+' inconsistência(s) nos dados. Veja o histórico em Sincronização Nuvem.', 'aviso');
+    }
+  } finally {
+    kbCorrigindoAgora = false;
+  }
+  return acoes;
+}
+
+function kbVerificarIntegridadeDados(){
+  if(!state.clientes || state.clientes.length===0) return [];
+  const norm = s=>(s||'').trim().toUpperCase().replace(/\s+/g,' ');
+
+  // Duplicados por código
+  const porCod = {};
+  state.clientes.forEach(c=>{ if(c.cod) porCod[c.cod]=(porCod[c.cod]||0)+1; });
+  const codsDuplicados = Object.entries(porCod).filter(([,q])=>q>1);
+
+  // Duplicados por nome/razão social
+  const porNome = {};
+  state.clientes.forEach(c=>{ const n=norm(c.razao||c.nome); if(n) porNome[n]=(porNome[n]||0)+1; });
+  const nomesDuplicados = Object.entries(porNome).filter(([,q])=>q>1);
+
+  // Informação essencial faltando
+  const semCod  = state.clientes.filter(c=>!c.cod).length;
+  const semNome = state.clientes.filter(c=>!(c.razao||c.nome)).length;
+
+  // Inconsistências no CRM: estágio manual sem vendedor vinculado
+  const stageSemVendedor = state.clientes.filter(c=>
+    (c.crmStage==='atendimento'||c.crmStage==='orcamento'||c.crmStage==='concluido') && !c.crmVendedorLogin
+  ).length;
+
+  const problemas = [];
+  if(codsDuplicados.length>0)  problemas.push(codsDuplicados.length+' código(s) de cliente duplicado(s): '+codsDuplicados.slice(0,5).map(([c])=>c).join(', '));
+  if(nomesDuplicados.length>0) problemas.push(nomesDuplicados.length+' cliente(s) com nome duplicado: '+nomesDuplicados.slice(0,3).map(([n])=>n).join(', '));
+  if(semCod>0)  problemas.push(semCod+' cliente(s) sem código cadastrado');
+  if(semNome>0) problemas.push(semNome+' cliente(s) sem nome/razão social');
+  if(stageSemVendedor>0) problemas.push(stageSemVendedor+' cliente(s) no CRM sem vendedor vinculado');
+
+  const assinatura = JSON.stringify(problemas);
+  if(problemas.length>0 && assinatura!==kbUltimaAssinaturaIntegridade){
+    kbAlertar('Encontrei possíveis inconsistências nos dados: '+problemas[0]+(problemas.length>1?' (+'+(problemas.length-1)+' outra(s))':''), 'aviso', 'kbVerificarIntegridadeDados');
+  }
+  kbUltimaAssinaturaIntegridade = assinatura;
+  try{ localStorage.setItem('divinissima_integridade', JSON.stringify({problemas, quando:new Date().toISOString()})); }catch(e){}
+  return problemas;
+}
+
+function kbRenderIntegridade(){
+  const el = document.getElementById('kb-integridade');
+  if(!el) return;
+  const problemas = kbVerificarIntegridadeDados();
+  if(problemas.length===0){
+    el.innerHTML = '<div style="color:var(--ok);font-size:12px;padding:.5rem 0">✅ Nenhuma duplicidade ou informação faltando encontrada agora.</div>';
+    return;
+  }
+  el.innerHTML = problemas.map(p=>`<div style="font-size:12px;color:#E67E22;padding:4px 0;border-bottom:1px solid var(--border)">⚠️ ${p}</div>`).join('');
+}
+
 function kbRenderLogErros(){
   const el = document.getElementById('kb-log-erros');
   if(!el) return;
@@ -1324,6 +1480,7 @@ function renderSyncPage(){
   const urlInput = document.getElementById('sync-url-input');
   if(urlInput) urlInput.value = CLOUD_SYNC_URL || '';
   kbRenderLogErros();
+  kbRenderIntegridade();
 
   const badge  = document.getElementById('sync-status-badge');
   const detail = document.getElementById('sync-status-detail');
@@ -1505,6 +1662,9 @@ function saveState(){
   notifySync();
   // Dispara evento para sincronizar outras abas do navegador
   try{ window.dispatchEvent(new StorageEvent('storage',{key:STORE_KEY})); }catch(e){}
+  // Robô: corrige sozinho o que der (duplicados por código, inconsistências
+  // de CRM) e depois confere o que restou, toda vez que algo é salvo.
+  setTimeout(()=>{ try{ kbAutoCorrigirDados(); kbVerificarIntegridadeDados(); }catch(e){} }, 300);
   // Atualiza links automaticamente se a aba Links estiver ativa
   try{
     const activeAdmin = document.querySelector('#sb-admin .sitem.active');
@@ -6089,17 +6249,20 @@ window.onload=async function(){
       try{
         const dadosNuvem = await buscarDaNuvem(false);
         if(dadosNuvem){
-          // NUNCA sobrescreve dados locais com dados da nuvem se o local já
-          // tem igual ou mais informação — só restaura da nuvem se o local
-          // estiver vazio ou se a nuvem realmente tiver mais dados.
+          // O critério principal agora é o HORÁRIO da última alteração, não a
+          // quantidade de clientes — uma mudança de status no CRM (ex.: mover
+          // um cliente para "Orçamento") não muda a quantidade, mas ainda
+          // precisa chegar em todos os logins. Só bloqueamos o caso extremo de
+          // a nuvem "zerar" os clientes enquanto o local tem dados de verdade.
           const clientesLocais = (state.clientes||[]).length;
           const clientesNuvem  = (dadosNuvem.clientes||[]).length;
           const vendLocais     = Object.keys(state.vendTotais||{}).length;
           const vendNuvem      = Object.keys(dadosNuvem.vendTotais||{}).length;
           const semDadosLocaisAgora = clientesLocais===0 && vendLocais===0;
-          const nuvemTemMaisOuIgual = clientesNuvem >= clientesLocais && vendNuvem >= vendLocais;
+          const nuvemMaisRecente = (dadosNuvem.timestamp||0) > (state.timestamp||0);
+          const quedaSuspeitaAgora = clientesLocais > 0 && clientesNuvem === 0;
 
-          if(semDadosLocaisAgora || nuvemTemMaisOuIgual){
+          if(semDadosLocaisAgora || (nuvemMaisRecente && !quedaSuspeitaAgora)){
             state = dadosNuvem;
             localStorage.setItem(STORE_KEY, JSON.stringify(state));
             localStorage.setItem('divinissima_last_sync', Date.now());
@@ -6108,13 +6271,15 @@ window.onload=async function(){
             // Se a pessoa já estiver logada (ex.: link direto de vendedor),
             // atualiza a tela na hora com o dado mais recente.
             if(currentUser && typeof syncAll==='function') syncAll();
-          } else {
-            // A nuvem devolveu dados, mas MENOS do que já existe localmente —
+          } else if(quedaSuspeitaAgora) {
+            // A nuvem devolveu ZERO clientes enquanto o local tem dados —
             // mantém o que está no computador e não sobrescreve.
-            console.warn('⚠️ Nuvem tinha menos dados que o local — mantido o local (nuvem:',
-              clientesNuvem, 'clientes / local:', clientesLocais, 'clientes)');
+            console.warn('⚠️ Nuvem estava sem clientes — mantido o local (local:', clientesLocais, 'clientes)');
             atualizarStatusSync('ok');
-            kbAlertar('A nuvem tinha menos clientes ('+clientesNuvem+') que este computador ('+clientesLocais+'). Os dados locais foram mantidos com segurança.', 'aviso', 'window.onload');
+            kbAlertar('A nuvem estava sem clientes, mas este computador tem '+clientesLocais+'. Os dados locais foram mantidos com segurança.', 'aviso', 'window.onload');
+          } else {
+            // Nuvem não é mais recente que o local — nada a fazer.
+            atualizarStatusSync('ok');
           }
         } else {
           // A nuvem respondeu, mas sem dados aproveitáveis — não é "sincronizado",
