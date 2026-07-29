@@ -2167,7 +2167,21 @@ function statusTag(c){
    c.crmStage + c.crmVendedorLogin (quem "puxou" o cliente para o pipeline).
    ====================================================================== */
 let kbDragIdx = null;
-let kbPendingMove = null; // {idx, destino}
+let kbDragCod = null;
+let kbPendingMove = null; // {cod, idx, destino}
+
+// Resolve o cliente "pendente" (aguardando modal de vínculo/orçamento) pelo
+// CÓDIGO, que é estável — nunca pelo índice na lista, que pode mudar entre o
+// momento do arraste e o momento de confirmar (ex.: uma sincronização com a
+// nuvem reordenando state.clientes no meio do caminho).
+function kbResolverPendingCliente(){
+  if(!kbPendingMove) return null;
+  if(kbPendingMove.cod){
+    const porCod = state.clientes.find(c=>c.cod===kbPendingMove.cod);
+    if(porCod) return porCod;
+  }
+  return state.clientes[kbPendingMove.idx] || null;
+}
 
 function kbTotalEmpresa(){
   // Mesma fonte usada no card "VENDAS TOTAL" do Dashboard (vendTotais = soma
@@ -2317,7 +2331,7 @@ function renderCRM(){
         : col.listaExibir.map(c=>{
             const idx = state.clientes.indexOf(c);
             const vendLbl = c.crmVendedorLogin ? (getVendedorNome(c.crmVendedorLogin)||c.crmVendedorLogin) : '';
-            return `<div class="kb-card" draggable="true" data-idx="${idx}"
+            return `<div class="kb-card" draggable="true" data-idx="${idx}" data-cod="${(c.cod||'').replace(/"/g,'&quot;')}"
                 ondragstart="kbDragStart(event)" ondragend="kbDragEnd(event)"
                 onclick="kbAbrirDetalheCard(${idx}, ${isAdmin})"
                 title="${(c.razao||c.nome||'').replace(/"/g,'')}">
@@ -2386,6 +2400,7 @@ function kbDragStart(e){
   const card = e.target.closest('.kb-card');
   if(!card) return;
   kbDragIdx = parseInt(card.dataset.idx);
+  kbDragCod = card.dataset.cod || null;
   card.classList.add('kb-dragging');
   e.dataTransfer.effectAllowed='move';
   try{ e.dataTransfer.setData('text/plain', String(kbDragIdx)); }catch(err){}
@@ -2402,15 +2417,23 @@ function kbDrop(e){
   e.currentTarget.classList.remove('kb-dragover');
   const destino = e.currentTarget.dataset.col;
   let idx = kbDragIdx;
+  const cod = kbDragCod;
   if(idx===null||idx===undefined||isNaN(idx)){
     const raw = e.dataTransfer.getData('text/plain');
     idx = raw?parseInt(raw):null;
   }
   kbDragIdx = null;
-  if(idx===null||isNaN(idx)) return;
-  const cliente = state.clientes[idx];
+  kbDragCod = null;
+  // Resolve o cliente pelo CÓDIGO (estável) — só cai para o índice se o
+  // cliente não tiver código cadastrado.
+  let cliente = cod ? state.clientes.find(c=>c.cod===cod) : null;
+  if(!cliente){
+    if(idx===null||isNaN(idx)) return;
+    cliente = state.clientes[idx];
+  }
   if(!cliente) return;
-  kbMoverCliente(cliente, idx, destino);
+  const idxReal = state.clientes.indexOf(cliente);
+  kbMoverCliente(cliente, idxReal, destino);
 }
 
 // Abre o mesmo modal de detalhe (últimas compras + ranking de produtos)
@@ -2444,7 +2467,7 @@ function kbMoverCliente(cliente, idx, destino){
 
   if(destino==='atendimento'){
     if(!cliente.crmVendedorLogin){
-      kbPendingMove = {idx, destino:'atendimento'};
+      kbPendingMove = {cod:cliente.cod, idx, destino:'atendimento'};
       kbOpenVendModal(cliente);
       return;
     }
@@ -2457,13 +2480,13 @@ function kbMoverCliente(cliente, idx, destino){
   if(destino==='orcamento'){
     if(!cliente.crmVendedorLogin){
       if(currentUser.tipo==='admin'){
-        kbPendingMove = {idx, destino:'orcamento'};
+        kbPendingMove = {cod:cliente.cod, idx, destino:'orcamento'};
         kbOpenVendModal(cliente);
         return;
       }
       cliente.crmVendedorLogin = currentUser.login;
     }
-    kbPendingMove = {idx, destino:'orcamento'};
+    kbPendingMove = {cod:cliente.cod, idx, destino:'orcamento'};
     kbOpenOrcModal(cliente);
     return;
   }
@@ -2471,7 +2494,7 @@ function kbMoverCliente(cliente, idx, destino){
   if(destino==='concluido'){
     if(!cliente.crmVendedorLogin){
       if(currentUser.tipo==='admin'){
-        kbPendingMove = {idx, destino:'concluido'};
+        kbPendingMove = {cod:cliente.cod, idx, destino:'concluido'};
         kbOpenVendModal(cliente);
         return;
       }
@@ -2507,13 +2530,13 @@ function kbConfirmVincular(){
   const sel = document.getElementById('kb-vend-sel');
   const login = sel.value;
   if(!login){ alert('Selecione um vendedor.'); return; }
-  const {idx, destino} = kbPendingMove;
-  const cliente = state.clientes[idx];
+  const {destino} = kbPendingMove;
+  const cliente = kbResolverPendingCliente();
   if(!cliente) return;
   cliente.crmVendedorLogin = login;
   document.getElementById('modal-kb-vend').classList.add('hidden');
   if(destino==='orcamento'){
-    kbPendingMove = {idx, destino:'orcamento'};
+    kbPendingMove = {cod:cliente.cod, destino:'orcamento'};
     kbOpenOrcModal(cliente);
     return;
   }
@@ -2537,9 +2560,13 @@ function kbConfirmOrcamento(){
   if(!kbPendingMove) return;
   const valor = parseFloat(String(document.getElementById('kb-orc-valor').value||'0').replace(',','.'));
   if(isNaN(valor) || valor<0){ alert('Informe um valor válido.'); return; }
-  const {idx} = kbPendingMove;
-  const cliente = state.clientes[idx];
-  if(!cliente) return;
+  const cliente = kbResolverPendingCliente();
+  if(!cliente){
+    kbAlertar('Não foi possível encontrar o cliente para salvar o orçamento. Nada foi alterado — tente arrastar de novo.', 'erro', 'kbConfirmOrcamento');
+    kbPendingMove = null;
+    document.getElementById('modal-kb-orc').classList.add('hidden');
+    return;
+  }
   if(!cliente.crmVendedorLogin && currentUser.tipo==='vendedor') cliente.crmVendedorLogin = currentUser.login;
   cliente.crmOrcamentoValor = valor;
   cliente.crmStage = 'orcamento';
