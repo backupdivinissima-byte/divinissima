@@ -658,8 +658,9 @@ tr:hover td{background:var(--cream)}
             <div style="font-size:14px;font-weight:700;color:var(--brown)">Dados em tempo real entre computadores</div>
           </div>
           <p style="font-size:13px;color:var(--text-s);margin:0">
-            Quando ativada, toda vez que você importar um arquivo ou alterar dados, eles são enviados automaticamente
-            para uma planilha do Google. Os vendedores, em qualquer computador, recebem essas atualizações a cada 15 segundos.
+            Toda vez que você importar um arquivo ou alterar dados, eles são enviados automaticamente para o banco de
+            dados na nuvem (Firestore). Os vendedores, em qualquer computador, recebem essas atualizações em poucos segundos.
+            Já vem configurado e ativo — não é preciso nenhuma URL ou senha para isso funcionar.
           </p>
         </div>
 
@@ -672,20 +673,14 @@ tr:hover td{background:var(--cream)}
         </div>
 
         <div class="card">
-          <div style="font-size:13px;font-weight:700;color:var(--brown);margin-bottom:.75rem">⚙️ Configuração</div>
+          <div style="font-size:13px;font-weight:700;color:var(--brown);margin-bottom:.75rem">⚙️ Ações</div>
           <p style="font-size:12px;color:var(--text-s);margin-bottom:1rem">
-            Cole abaixo a URL do seu Google Apps Script Web App. Não sabe como criar?
-            <a href="#" onclick="mostrarGuiaSync();return false;" style="color:var(--gold-d);font-weight:600">Ver guia passo a passo</a>
+            A sincronização já está ativa automaticamente. Use os botões abaixo se quiser conferir a conexão ou
+            forçar um envio imediato dos dados deste computador.
           </p>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <input class="input" id="sync-url-input" placeholder="https://script.google.com/macros/s/.../exec" style="flex:1;min-width:280px;font-family:monospace;font-size:12px">
-            <button class="btn btn-primary" onclick="salvarUrlSync()">💾 Salvar e ativar</button>
-          </div>
-          <div id="sync-url-err" class="hidden alert-err" style="margin-top:.5rem"></div>
-          <div style="margin-top:1rem;display:flex;gap:8px">
+          <div style="display:flex;gap:8px">
             <button class="btn btn-sm" onclick="testarConexaoSync()">🔍 Testar conexão</button>
             <button class="btn btn-sm" onclick="forcarSyncAgora()">🔄 Forçar sincronização agora</button>
-            <button class="btn btn-sm btn-danger" onclick="desativarSyncNuvem()">🚫 Desativar nuvem</button>
           </div>
         </div>
 
@@ -730,19 +725,6 @@ tr:hover td{background:var(--cream)}
           <div id="kb-log-erros" style="max-height:280px;overflow-y:auto"></div>
         </div>
 
-        <div id="sync-guia" class="card hidden" style="margin-top:1.25rem">
-          <div style="font-size:13px;font-weight:700;color:var(--brown);margin-bottom:1rem">📖 Como criar o Web App no Google</div>
-          <ol style="font-size:13px;color:var(--text-s);line-height:2;padding-left:1.2rem">
-            <li>Acesse <a href="https://sheets.google.com" target="_blank" style="color:var(--gold-d)">sheets.google.com</a> e crie uma planilha nova (ex: "Divinissima - Dados")</li>
-            <li>No menu, clique em <b>Extensões → Apps Script</b></li>
-            <li>Apague o código padrão e cole o script fornecido (peça para o suporte ou veja o documento anexo)</li>
-            <li>Clique em <b>Implantar → Nova implantação</b></li>
-            <li>Tipo: <b>App da Web</b> · Executar como: <b>Eu</b> · Quem pode acessar: <b>Qualquer pessoa</b></li>
-            <li>Clique em <b>Implantar</b> e autorize o acesso quando solicitado</li>
-            <li>Copie a <b>URL do app da Web</b> gerada (termina em <code>/exec</code>)</li>
-            <li>Cole essa URL no campo acima e clique em <b>Salvar e ativar</b></li>
-          </ol>
-        </div>
       </div>
 
       <!-- == VENDEDOR: PAINEL == -->
