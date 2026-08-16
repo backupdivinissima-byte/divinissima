@@ -977,6 +977,50 @@ function desativarSyncNuvem(){
   location.reload();
 }
 
+// CORREÇÃO (cliente "voltando sozinho" de coluna no CRM após alguns minutos):
+// o sistema sincronizava a NUVEM inteira por "última escrita vence" — cada
+// envio substituía TODOS os clientes de uma vez pela cópia em memória
+// daquele dispositivo. Se o vendedor movesse um cliente de coluna e, pouco
+// depois, OUTRO login (o admin, ou outro vendedor) salvasse qualquer coisa
+// usando uma cópia da nuvem carregada ANTES dessa movimentação, esse outro
+// envio sobrescrevia a nuvem inteira com uma versão desatualizada — apagando
+// a movimentação, mesmo sem qualquer relação com o cliente movido. Isso se
+// espalhava para todos os logins na sincronização seguinte.
+//
+// Esta função mescla, cliente a cliente, só os campos do ESTADO DO CRM
+// (coluna do pipeline, vendedor vinculado, valor do orçamento) entre duas
+// listas — mantendo sempre a alteração mais recente de cada cliente
+// (comparando `crmStageChangedAt`), não a lista inteira mais recente.
+// Os demais dados (vendas, cadastro etc.) continuam vindo normalmente de
+// `base` — só o estado do CRM é reconciliado por cliente.
+function mergeClientesCRM(base, outro){
+  if(!Array.isArray(base) || !Array.isArray(outro) || outro.length===0) return base;
+  const CRM_FIELDS = ['crmStage','crmVendedorLogin','crmOrcamentoValor','crmOrigem','crmStageChangedAt'];
+  const normCod  = c => String(c==null?'':c).trim().replace(/^0+(?=\d)/,'');
+  const normNome = n => (n||'').trim().toLowerCase().replace(/\s+/g,' ');
+  const porCod = new Map(), porNome = new Map();
+  outro.forEach(c=>{
+    const cod = normCod(c.cod);
+    if(cod && !porCod.has(cod)) porCod.set(cod, c);
+    const nome = normNome(c.razao||c.nome);
+    if(nome && !porNome.has(nome)) porNome.set(nome, c);
+  });
+  base.forEach(c=>{
+    const cod = normCod(c.cod);
+    const nome = normNome(c.razao||c.nome);
+    const par = (cod && porCod.get(cod)) || (nome && porNome.get(nome));
+    if(!par) return;
+    const tsBase  = c.crmStageChangedAt   ? new Date(c.crmStageChangedAt).getTime()   : 0;
+    const tsOutro = par.crmStageChangedAt ? new Date(par.crmStageChangedAt).getTime() : 0;
+    if(tsOutro > tsBase){
+      CRM_FIELDS.forEach(f=>{
+        if(par[f]===undefined || par[f]===null) delete c[f]; else c[f]=par[f];
+      });
+    }
+  });
+  return base;
+}
+
 // Envia o state atual para a planilha Google (chamado pelo admin ao salvar)
 
 
@@ -984,6 +1028,26 @@ async function enviarParaNuvem(){
   if(!CLOUD_SYNC_URL) return false;
   if(!navigator.onLine) return false;
   atualizarStatusSync('enviando');
+  // Antes de enviar, faz uma checagem leve (action=check, só timestamp) para
+  // ver se já existe na nuvem uma versão mais nova do que a que este
+  // dispositivo conhece. Se existir, busca essa versão completa e mescla o
+  // ESTADO DO CRM cliente a cliente (ver mergeClientesCRM) antes de enviar —
+  // assim este envio nunca apaga uma movimentação de coluna feita há pouco
+  // por outro login. Se a checagem falhar (ex.: sem internet), segue com o
+  // envio normal, como antes.
+  try{
+    const tsConhecido = Math.max(
+      parseInt(localStorage.getItem('divinissima_last_sync')||'0'),
+      parseInt(localStorage.getItem('divinissima_local_data_ts')||'0')
+    );
+    const check = await buscarDaNuvem(true);
+    if(check && check.ok && check.timestamp && check.timestamp > tsConhecido){
+      const dadosNuvemAtual = await buscarDaNuvem(false);
+      if(dadosNuvemAtual && Array.isArray(dadosNuvemAtual.clientes)){
+        state.clientes = mergeClientesCRM(state.clientes, dadosNuvemAtual.clientes);
+      }
+    }
+  }catch(e){ /* checagem é só uma proteção extra — se falhar, envia normalmente */ }
   const ts = Date.now();
   const dados = JSON.stringify({...state, timestamp:ts});
   const body = JSON.stringify({action:'save', data:dados, timestamp:ts});
@@ -1143,6 +1207,13 @@ async function sincronizarComNuvem(forcarRender){
   const deveRestaurar = (semDadosLocais && nuvemTemAlgumDado) || (!semDadosLocais && !quedaSuspeita);
 
   if(deveRestaurar || (metasMudou && clientesNuvem >= clientesLocais && nuvemTemAlgumDado)){
+    // Antes de adotar a versão da nuvem inteira, reconcilia o ESTADO DO CRM
+    // cliente a cliente (ver mergeClientesCRM) — protege contra o caso de a
+    // versão da nuvem que estamos prestes a adotar já estar desatualizada
+    // no CRM em relação ao que este dispositivo tem localmente (ex.: uma
+    // movimentação de coluna feita agora mesmo, ainda não confirmada no
+    // envio para a nuvem).
+    dadosNuvem.clientes = mergeClientesCRM(dadosNuvem.clientes||[], state.clientes||[]);
     state = dadosNuvem;
     saveState();
     localStorage.setItem('divinissima_last_sync', Date.now());
@@ -1404,7 +1475,7 @@ function kbAutoCorrigirDados(){
     state.clientes.forEach(c=>{
       if((c.crmStage==='atendimento'||c.crmStage==='orcamento'||c.crmStage==='concluido') && !c.crmVendedorLogin){
         acoes.push('Cliente "'+(c.razao||c.nome||'—')+'" estava em "'+c.crmStage+'" sem vendedor vinculado — devolvido para a classificação automática do CRM');
-        c.crmStage = null; c.crmOrcamentoValor = null; delete c.crmStageChangedAt;
+        c.crmStage = null; c.crmOrcamentoValor = null; c.crmStageChangedAt = new Date().toISOString();
       }
     });
 
@@ -2637,7 +2708,7 @@ function kbVerificarViradaMes(){
         c.crmStage = null;
         c.crmOrcamentoValor = null;
         c.crmOrigem = null;
-        delete c.crmStageChangedAt;
+        c.crmStageChangedAt = new Date().toISOString();
         mudou = true;
       }
     });
@@ -2667,7 +2738,7 @@ function kbVerificarAtendimentoExpirado(){
           c.crmVendedorLogin = null;
           c.crmOrcamentoValor = null;
           c.crmOrigem = null;
-          delete c.crmStageChangedAt;
+          c.crmStageChangedAt = new Date().toISOString();
           mudou = true;
         }
       }
@@ -2899,7 +2970,11 @@ function kbMoverCliente(cliente, idx, destino){
     cliente.crmVendedorLogin = null;
     cliente.crmOrcamentoValor = null;
     cliente.crmOrigem = null;
-    delete cliente.crmStageChangedAt;
+    // Mantém (em vez de apagar) o carimbo de horário desta mudança: ele é o
+    // que permite à sincronização com a nuvem saber que ESTA é a alteração
+    // mais recente do CRM deste cliente, e não perdê-la para uma cópia mais
+    // antiga vinda de outro login (ver mergeClientesCRM).
+    cliente.crmStageChangedAt = new Date().toISOString();
     saveState(); renderCRM();
     return;
   }
@@ -6447,9 +6522,8 @@ function excluirImportacao(idx){
   const item = hist[idx];
   if(!item){ alert('Item não encontrado.'); return; }
 
-  if(!confirm('Excluir a importação "'+(item.periodo||'—')+'"?\n\nOs dados deste mês serão removidos.\n\nEsta ação não pode ser desfeita.')) return;
+  if(!confirm('Excluir a importação "'+(item.periodo||'—')+'"?\n\nOs dados de vendas deste mês serão removidos. Clientes com outros meses de histórico ou com atendimento em andamento no CRM são preservados.\n\nEsta ação não pode ser desfeita.')) return;
 
-  const chave = item.importKey || item.key || item.mesRef || null;
   const periodo = item.periodo || '';
 
   // Descobrir anoMes do período (ex: "Julho/2025" → "2025-07")
@@ -6465,24 +6539,49 @@ function excluirImportacao(idx){
     }
   });
 
-  if(chave){
-    // Remove clientes que SÓ têm dados deste período (importKey)
-    const antes = state.clientes.length;
-    state.clientes = state.clientes.filter(c=>(c.importKey||c.mesRef)!==chave);
-    const removidos = antes - state.clientes.length;
+  // CORREÇÃO (perda de dados do CRM ao reimportar/excluir o mês atual):
+  // a versão anterior apagava o cliente INTEIRO sempre que seu campo
+  // `importKey`/`mesRef` batia com a importação excluída. Só que esse campo
+  // é sobrescrito a cada nova importação — ele reflete "a última importação
+  // que tocou este cliente", não "este cliente só existe por causa desta
+  // importação". Na prática, isso apagava clientes com meses de histórico
+  // anteriores (comprasMes) e com atendimento já registrado no CRM pelos
+  // vendedores (crmStage/crmVendedorLogin), só porque tinham aparecido na
+  // importação mais recente.
+  //
+  // Agora a exclusão trabalha pelo MÊS (anoMesExcluido), não pelo lote de
+  // importação: remove apenas a compra daquele mês de cada cliente, e só
+  // remove o cliente da base se, depois disso, ele não tiver NENHUM outro
+  // mês de compra registrado E nenhum dado de atendimento no CRM — ou seja,
+  // se ele realmente não existir por nenhum outro motivo.
+  let removidos = 0;
+  let mesesLimpos = 0;
 
-    // Para clientes que ficaram (têm outros meses): remove este mês do histórico
-    if(anoMesExcluido){
-      state.clientes.forEach(c=>{
-        if(c.comprasMes && c.comprasMes[anoMesExcluido]){
-          delete c.comprasMes[anoMesExcluido];
-          c.totalGeral = Object.values(c.comprasMes).reduce((s,v)=>s+(v||0),0);
-        }
-      });
-    }
-    alert('✓ '+ removidos +' clientes do período removidos.');
+  if(anoMesExcluido){
+    const restantes = [];
+    state.clientes.forEach(c=>{
+      if(c.comprasMes && Object.prototype.hasOwnProperty.call(c.comprasMes, anoMesExcluido)){
+        delete c.comprasMes[anoMesExcluido];
+        c.totalGeral = Object.values(c.comprasMes).reduce((s,v)=>s+(v||0),0);
+        mesesLimpos++;
+      }
+      const semHistorico = !c.comprasMes || Object.keys(c.comprasMes).length===0;
+      const semCrm = !c.crmStage && !c.crmVendedorLogin;
+      if(semHistorico && semCrm){
+        // Cliente realmente não tem mais nenhum dado (nem compra, nem CRM) —
+        // só nesse caso ele é removido da base.
+        removidos++;
+        return;
+      }
+      restantes.push(c);
+    });
+    state.clientes = restantes;
+    alert('✓ Mês removido de '+mesesLimpos+' cliente(s)'+(removidos>0?' · '+removidos+' cliente(s) sem nenhum outro histórico ou atendimento no CRM foram removidos':'')+'.');
   } else {
-    state.clientes = [];
+    // Não foi possível identificar o mês desta importação com segurança —
+    // por segurança, NÃO apaga nenhum cliente da base; remove só o registro
+    // do histórico de importações.
+    alert('Não foi possível identificar automaticamente o mês desta importação. Por segurança, nenhum cliente foi removido da base — apenas o registro do histórico de importações foi excluído.');
   }
 
   // Remove o mês do vendTotais de cada vendedor
