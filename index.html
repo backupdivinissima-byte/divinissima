@@ -1021,208 +1021,236 @@ function mergeClientesCRM(base, outro){
   return base;
 }
 
-// Envia o state atual para a planilha Google (chamado pelo admin ao salvar)
+// ═══════════════════════════════════════════════════════════
+// MIGRAÇÃO: sincronização agora via Firestore (banco de dados de
+// verdade), não mais via planilha Google Sheets. A URL antiga
+// (CLOUD_SYNC_URL) continua definida só para as telas/condições que
+// checam "sincronização está ativa?" continuarem funcionando sem
+// precisar editar cada uma — mas ela não é mais usada para gravar
+// ou ler dados; isso agora acontece pelas funções abaixo.
+//
+// A diferença central: cada CLIENTE é um documento independente no
+// banco (coleção "clientes"), não uma entrada dentro de um blob
+// gigante. Isso elimina, na raiz, o bug de "um envio desatualizado
+// apaga a movimentação de coluna feita por outro login" — porque
+// não existe mais "enviar tudo de uma vez"; cada gravação afeta só
+// o registro que realmente mudou.
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyDcpVaJ52mnzyU1nZ3Q_tiY9ZZnfeLMP7c",
+  authDomain: "divinissima-crm.firebaseapp.com",
+  projectId: "divinissima-crm",
+  storageBucket: "divinissima-crm.firebasestorage.app",
+  messagingSenderId: "71117223059",
+  appId: "1:71117223059:web:fce1618e8334c718844966",
+  measurementId: "G-HDLPDSNHGM"
+};
 
+let __fb = null; // {app, auth, db, fsMod} depois de iniciarFirestore()
+let __fbIniciando = null; // Promise em andamento, evita iniciar 2x em paralelo
+const __fbClientesAssinatura = new Map(); // id do documento -> JSON já confirmado (local ou nuvem)
+let __fbRestoAssinatura = null; // JSON já confirmado do documento meta/state
+let __fbLastPullTs = 0; // maior _updatedAt (ms) já recebido, para buscar só o que mudou depois
 
+// Gera o mesmo ID estável (baseado no código do cliente, com nome como
+// reserva) usado tanto na migração inicial quanto em toda gravação nova —
+// é o que permite encontrar/atualizar sempre o MESMO documento no banco
+// para um mesmo cliente, em vez de duplicar.
+function idClienteFirestore(c){
+  const normCod = String(c.cod==null?'':c.cod).trim().replace(/^0+(?=\d)/,'');
+  let base = normCod || ('n_' + (c.razao||c.nome||'cliente').trim());
+  base = base.replace(/[\/\.\#\$\[\]]/g,'_').replace(/\s+/g,'_').substring(0,300);
+  return base || null;
+}
+
+async function iniciarFirestore(){
+  if(__fb) return __fb;
+  if(__fbIniciando) return __fbIniciando;
+  __fbIniciando = (async ()=>{
+    const { initializeApp } = await import('https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js');
+    const authMod = await import('https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js');
+    const fsMod = await import('https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js');
+    const app = initializeApp(FIREBASE_CONFIG);
+    const auth = authMod.getAuth(app);
+    if(!auth.currentUser){
+      await authMod.signInAnonymously(auth);
+    }
+    const db = fsMod.getFirestore(app);
+    __fb = { app, auth, db, fsMod };
+    return __fb;
+  })();
+  return __fbIniciando;
+}
+
+// Envia para o Firestore só o que realmente mudou desde a última vez que
+// sincronizamos (comparando com __fbClientesAssinatura/__fbRestoAssinatura)
+// — nunca reenvia clientes que não foram tocados.
 async function enviarParaNuvem(){
-  if(!CLOUD_SYNC_URL) return false;
   if(!navigator.onLine) return false;
   atualizarStatusSync('enviando');
-  // Antes de enviar, faz uma checagem leve (action=check, só timestamp) para
-  // ver se já existe na nuvem uma versão mais nova do que a que este
-  // dispositivo conhece. Se existir, busca essa versão completa e mescla o
-  // ESTADO DO CRM cliente a cliente (ver mergeClientesCRM) antes de enviar —
-  // assim este envio nunca apaga uma movimentação de coluna feita há pouco
-  // por outro login. Se a checagem falhar (ex.: sem internet), segue com o
-  // envio normal, como antes.
   try{
-    const tsConhecido = Math.max(
-      parseInt(localStorage.getItem('divinissima_last_sync')||'0'),
-      parseInt(localStorage.getItem('divinissima_local_data_ts')||'0')
-    );
-    const check = await buscarDaNuvem(true);
-    if(check && check.ok && check.timestamp && check.timestamp > tsConhecido){
-      const dadosNuvemAtual = await buscarDaNuvem(false);
-      if(dadosNuvemAtual && Array.isArray(dadosNuvemAtual.clientes)){
-        state.clientes = mergeClientesCRM(state.clientes, dadosNuvemAtual.clientes);
-      }
-    }
-  }catch(e){ /* checagem é só uma proteção extra — se falhar, envia normalmente */ }
-  const ts = Date.now();
-  const dados = JSON.stringify({...state, timestamp:ts});
-  const body = JSON.stringify({action:'save', data:dados, timestamp:ts});
-  try{
-    atualizarStatusSync('enviando');
-    const resp = await fetch(CLOUD_SYNC_URL,{method:'POST',mode:'cors',headers:{'Content-Type':'text/plain;charset=utf-8'},body});
-    if(resp.ok){
-      ultimoSyncCloud=ts;
-      state.timestamp = ts;
-      localStorage.setItem('divinissima_last_sync',String(ts));
-      atualizarStatusSync('ok');
-      return true;
-    }
-    throw new Error('HTTP '+resp.status);
-  }catch(e1){
-    try{
-      await fetch(CLOUD_SYNC_URL,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain;charset=utf-8'},body});
-      ultimoSyncCloud=ts;
-      state.timestamp = ts;
-      localStorage.setItem('divinissima_last_sync',String(ts));
-      atualizarStatusSync('ok');
-      return true;
-    }catch(e2){
-      const isNetErr=e2.message&&(e2.message.includes('Failed to fetch')||e2.message.includes('NetworkError')||e2.message.includes('CORS')||e2.message.includes('Load failed'));
-      if(!isNetErr) console.warn('Aviso nuvem:',e2.message);
-      atualizarStatusSync('erro');
-      kbAlertar('Não foi possível enviar seus dados para a nuvem agora. Verifique sua internet — suas alterações continuam salvas neste computador.', 'erro', 'enviarParaNuvem');
-      return false;
-    }
-  }
-}
+    const fb = await iniciarFirestore();
+    const { db, fsMod } = fb;
+    const { collection, doc, writeBatch, setDoc, serverTimestamp } = fsMod;
 
+    const clientes = state.clientes||[];
+    const idsAtuais = new Set();
+    const alterados = [];
+    clientes.forEach(c=>{
+      const id = idClienteFirestore(c);
+      if(!id) return;
+      idsAtuais.add(id);
+      const assinatura = JSON.stringify(c);
+      if(__fbClientesAssinatura.get(id) !== assinatura) alterados.push([id, c, assinatura]);
+    });
 
+    // Clientes que já sincronizamos antes mas não existem mais localmente
+    // (ex.: removidos por excluirImportacao, por não terem nenhum histórico
+    // de compra nem atendimento em andamento no CRM). Marca como "excluído"
+    // no Firestore (em vez de apagar o documento de verdade) para que essa
+    // remoção também chegue aos outros logins/dispositivos na próxima
+    // sincronização — senão o cliente "ressuscitaria" ao ser buscado de novo.
+    const removidos = [];
+    __fbClientesAssinatura.forEach((assinatura, id)=>{
+      if(assinatura !== '__excluido__' && !idsAtuais.has(id)) removidos.push(id);
+    });
 
-
-
-// Busca os dados mais recentes da planilha Google (chamado por todos: admin e vendedores)
-async function buscarDaNuvem(somenteCheck, _tentativa){
-  if(!CLOUD_SYNC_URL) return null;
-  if(!navigator.onLine) return null;
-  const isHttps = window.location.protocol==='https:';
-  const isGithub = window.location.hostname.includes('github.io');
-  if(!isHttps && !isGithub) return null;
-  const tentativa = _tentativa||1;
-  const TIMEOUT = 25000; // 25s por requisição — planilhas grandes/Apps Script "frio" podem demorar
-  try{
-    if(!somenteCheck) atualizarStatusSync('buscando');
-
-    if(somenteCheck){
-      const resp = await fetch(CLOUD_SYNC_URL + '?action=check&t=' + Date.now(),
-        {method:'GET', cache:'no-store', signal:AbortSignal.timeout(TIMEOUT)});
-      if(!resp.ok) throw new Error('HTTP '+resp.status);
-      const json = await resp.json();
-      atualizarStatusSync('ok');
-      return json;
+    for(let i=0; i<alterados.length; i+=450){
+      const lote = alterados.slice(i, i+450);
+      const batch = writeBatch(db);
+      lote.forEach(([id, c])=>{
+        batch.set(doc(collection(db,'clientes'), id), {...c, _updatedAt: serverTimestamp()});
+      });
+      await batch.commit();
+      lote.forEach(([id,,assinatura])=>__fbClientesAssinatura.set(id, assinatura));
     }
 
-    // O Apps Script salva os dados divididos em blocos (célula do Sheets
-    // tem limite de ~50 mil caracteres). O protocolo real é em 2 etapas:
-    // 1) action=load       → só devolve quantos blocos existem (total) + timestamp
-    // 2) action=load_bloco → devolve o conteúdo de UM bloco por vez (idx)
-    // É preciso buscar cada bloco em sequência e concatenar antes de dar parse.
-    const respMeta = await fetch(CLOUD_SYNC_URL + '?action=load&t=' + Date.now(),
-      {method:'GET', cache:'no-store', signal:AbortSignal.timeout(TIMEOUT)});
-    if(!respMeta.ok) throw new Error('HTTP '+respMeta.status);
-    const meta = await respMeta.json();
-
-    if(!meta || !meta.ok || !meta.total){
-      // Nenhum dado salvo ainda na nuvem (planilha vazia) — não é erro.
-      atualizarStatusSync('ok');
-      return null;
+    for(let i=0; i<removidos.length; i+=450){
+      const lote = removidos.slice(i, i+450);
+      const batch = writeBatch(db);
+      lote.forEach(id=>{
+        batch.set(doc(collection(db,'clientes'), id), { _excluido: true, _updatedAt: serverTimestamp() });
+      });
+      await batch.commit();
+      lote.forEach(id=>__fbClientesAssinatura.set(id, '__excluido__'));
     }
 
-    let completo = '';
-    for(let i=0; i<meta.total; i++){
-      const respBloco = await fetch(CLOUD_SYNC_URL + '?action=load_bloco&idx=' + i + '&t=' + Date.now(),
-        {method:'GET', cache:'no-store', signal:AbortSignal.timeout(TIMEOUT)});
-      if(!respBloco.ok) throw new Error('HTTP bloco '+i+': '+respBloco.status);
-      const blocoJson = await respBloco.json();
-      if(!blocoJson || !blocoJson.ok || typeof blocoJson.data !== 'string'){
-        throw new Error('bloco '+i+' inválido ou vazio');
-      }
-      completo += blocoJson.data;
+    const resto = {
+      admin: state.admin||null, vendedores: state.vendedores||[], clientesMes: state.clientesMes||[],
+      vendTotais: state.vendTotais||{}, clientesInativos: state.clientesInativos||[],
+      clientesCliVend: state.clientesCliVend||[], metas: state.metas||{}, vendasDia: state.vendasDia||null,
+      vendasSemana: state.vendasSemana||null, crmMesRef: state.crmMesRef||null,
+      historicoImport: state.historicoImport||[]
+    };
+    const restoAssinatura = JSON.stringify(resto);
+    if(__fbRestoAssinatura !== restoAssinatura){
+      await setDoc(doc(db,'meta','state'), {...resto, _updatedAt: serverTimestamp()});
+      __fbRestoAssinatura = restoAssinatura;
     }
 
-    const dadosNuvem = JSON.parse(completo);
-    ultimoSyncCloud = meta.timestamp || Date.now();
+    const ts = Date.now();
+    ultimoSyncCloud = ts;
+    state.timestamp = ts;
+    localStorage.setItem('divinissima_last_sync', String(ts));
     atualizarStatusSync('ok');
-    return dadosNuvem;
+    return true;
   }catch(e){
-    // Uma tentativa extra automática antes de desistir — cobre falhas
-    // passageiras de rede (comuns em redes mais lentas/instáveis) sem
-    // precisar que a pessoa clique manualmente em "Forçar sincronização".
-    if(tentativa < 2){
-      await new Promise(r=>setTimeout(r, 1500));
-      return buscarDaNuvem(somenteCheck, tentativa+1);
-    }
-    if(!somenteCheck && navigator.onLine) atualizarStatusSync('erro');
-    console.warn('Falha ao buscar da nuvem após retry:', e && e.message);
-    if(!somenteCheck){
-      kbAlertar('Não foi possível buscar os dados mais recentes da nuvem. Mostrando o que já está salvo neste computador.', 'erro', 'buscarDaNuvem');
-    }
-    return null;
+    console.warn('Erro ao sincronizar com o Firestore:', e && e.message);
+    atualizarStatusSync('erro');
+    kbAlertar('Não foi possível enviar seus dados para a nuvem agora. Verifique sua internet — suas alterações continuam salvas neste computador.', 'erro', 'enviarParaNuvem');
+    return false;
   }
 }
 
-// Sincroniza: busca da nuvem e mescla com o state local
+// Busca só os clientes cujo _updatedAt é mais novo que o último que já
+// recebemos (__fbLastPullTs), em vez de baixar a base inteira toda vez.
 async function sincronizarComNuvem(forcarRender){
-  if(!CLOUD_SYNC_URL) return;
   if(!navigator.onLine) return;
-  if(window.location.protocol !== 'https:' && !window.location.hostname.includes('github.io')) return;
-
-  // Se usuário limpou intencionalmente, não restaurar
   const foiLimpo = localStorage.getItem('div_base_limpa') === '1';
   if(foiLimpo) return;
 
-  const clientesLocais = (state.clientes||[]).length;
-  const semDadosLocais = clientesLocais === 0 && Object.keys(state.vendTotais||{}).length === 0;
+  try{
+    const fb = await iniciarFirestore();
+    const { db, fsMod } = fb;
+    const { collection, getDocs, getDoc, doc, query, where, Timestamp } = fsMod;
 
-  // Se tem dados locais, compara timestamp antes de buscar
-  if(!semDadosLocais){
-    const check = await buscarDaNuvem(true);
-    if(!check) return;
-    const tsNuvem = check.timestamp || 0;
-    // BUGFIX: "tsLocal" precisa refletir a mudança local mais recente, não
-    // só a última vez que o ENVIO para a nuvem funcionou. Se o envio falhou
-    // (comum com internet instável), 'divinissima_last_sync' fica velho e a
-    // nuvem antiga parecia "mais nova" — apagando dados recém-importados.
-    const tsUltimoEnvioOk = parseInt(localStorage.getItem('divinissima_last_sync')||'0');
-    const tsDadosLocais   = parseInt(localStorage.getItem('divinissima_local_data_ts')||'0');
-    const tsLocal = Math.max(tsUltimoEnvioOk, tsDadosLocais);
-    // Só busca se a nuvem é mais recente que o local
-    if(tsNuvem <= tsLocal) return;
+    atualizarStatusSync('buscando');
+
+    const clientesRef = collection(db, 'clientes');
+    const snap = __fbLastPullTs > 0
+      ? await getDocs(query(clientesRef, where('_updatedAt', '>', Timestamp.fromMillis(__fbLastPullTs))))
+      : await getDocs(clientesRef);
+
+    let mudou = false;
+    let novoMaxTs = __fbLastPullTs;
+    snap.forEach(d=>{
+      const data = d.data();
+      const tsDoc = data._updatedAt && data._updatedAt.toMillis ? data._updatedAt.toMillis() : Date.now();
+      if(tsDoc > novoMaxTs) novoMaxTs = tsDoc;
+      const { _updatedAt, ...cliente } = data;
+      if(data._excluido){
+        // Cliente removido em outro login/dispositivo (ex.: excluirImportacao) —
+        // remove também localmente, em vez de manter/re-adicionar.
+        if(__fbClientesAssinatura.get(d.id) === '__excluido__') return;
+        __fbClientesAssinatura.set(d.id, '__excluido__');
+        const idxExistente = (state.clientes||[]).findIndex(c => idClienteFirestore(c) === d.id);
+        if(idxExistente >= 0){ state.clientes.splice(idxExistente,1); mudou = true; }
+        return;
+      }
+      const assinatura = JSON.stringify(cliente);
+      if(__fbClientesAssinatura.get(d.id) === assinatura) return; // já é a versão que nós mesmos enviamos
+      __fbClientesAssinatura.set(d.id, assinatura);
+      const idxExistente = (state.clientes||[]).findIndex(c => idClienteFirestore(c) === d.id);
+      if(idxExistente >= 0) state.clientes[idxExistente] = cliente;
+      else { if(!state.clientes) state.clientes = []; state.clientes.push(cliente); }
+      mudou = true;
+    });
+    __fbLastPullTs = novoMaxTs;
+
+    const metaSnap = await getDoc(doc(db, 'meta', 'state'));
+    if(metaSnap.exists()){
+      const { _updatedAt, ...metaData } = metaSnap.data();
+      const restoAssinatura = JSON.stringify(metaData);
+      if(__fbRestoAssinatura !== restoAssinatura){
+        __fbRestoAssinatura = restoAssinatura;
+        Object.assign(state, metaData);
+        mudou = true;
+      }
+    }
+
+    if(mudou || forcarRender){
+      localStorage.setItem(STORE_KEY, JSON.stringify(state));
+      localStorage.setItem('divinissima_local_data_ts', String(Date.now()));
+      if(currentUser && typeof syncAll==='function') syncAll();
+      console.log('🔄 Sync Firestore:', new Date().toLocaleTimeString('pt-BR'));
+    }
+    atualizarStatusSync('ok');
+  }catch(e){
+    console.warn('Falha ao sincronizar com o Firestore:', e && e.message);
+    if(navigator.onLine) atualizarStatusSync('erro');
   }
+}
 
-  // Busca dados completos da nuvem
-  const dadosNuvem = await buscarDaNuvem(false);
-  if(!dadosNuvem) return;
-
-  const clientesNuvem = (dadosNuvem.clientes||[]).length;
-  const vendLocais = Object.keys(state.vendTotais||{}).length;
-  const vendNuvem = Object.keys(dadosNuvem.vendTotais||{}).length;
-  const nuvemTemAlgumDado = clientesNuvem > 0 || vendNuvem > 0;
-
-  // Se chegamos até aqui com dados locais já existentes, é porque a nuvem
-  // JÁ PROVOU ser mais recente (checagem de timestamp lá em cima). Não
-  // exigimos mais que a quantidade de clientes tenha aumentado — uma
-  // mudança de status no CRM (ex.: mover um cliente para "Orçamento") não
-  // muda a quantidade, mas é uma atualização real que precisa chegar em
-  // todos os logins. A única proteção que mantemos é contra o caso extremo
-  // de a nuvem "zerar" os clientes enquanto o local tem dados de verdade —
-  // foi exatamente essa situação que causou o incidente anterior.
-  const quedaSuspeita = clientesLocais > 0 && clientesNuvem === 0;
-  const metasMudou = JSON.stringify(dadosNuvem.vendedores)!==JSON.stringify(state.vendedores)||
-                     JSON.stringify(dadosNuvem.metas)!==JSON.stringify(state.metas);
-
-  const deveRestaurar = (semDadosLocais && nuvemTemAlgumDado) || (!semDadosLocais && !quedaSuspeita);
-
-  if(deveRestaurar || (metasMudou && clientesNuvem >= clientesLocais && nuvemTemAlgumDado)){
-    // Antes de adotar a versão da nuvem inteira, reconcilia o ESTADO DO CRM
-    // cliente a cliente (ver mergeClientesCRM) — protege contra o caso de a
-    // versão da nuvem que estamos prestes a adotar já estar desatualizada
-    // no CRM em relação ao que este dispositivo tem localmente (ex.: uma
-    // movimentação de coluna feita agora mesmo, ainda não confirmada no
-    // envio para a nuvem).
-    dadosNuvem.clientes = mergeClientesCRM(dadosNuvem.clientes||[], state.clientes||[]);
-    state = dadosNuvem;
-    saveState();
-    localStorage.setItem('divinissima_last_sync', Date.now());
-    if(currentUser && typeof syncAll==='function') syncAll();
-    console.log('🔄 Sync nuvem:', clientesNuvem, 'clientes', new Date().toLocaleTimeString('pt-BR'));
-  } else if(quedaSuspeita){
-    // O robô impediu uma sobrescrita que zeraria os dados locais — avisa,
-    // sem bloquear o uso do sistema, para que fique registrado e visível.
-    kbAlertar('A nuvem estava sem clientes, mas este computador tem '+clientesLocais+'. Os dados locais foram mantidos com segurança.', 'aviso', 'sincronizarComNuvem');
+// Mantida por compatibilidade com as telas que ainda chamam buscarDaNuvem
+// diretamente (ex.: botão "Testar conexão", carregamento inicial). Com o
+// Firestore não existe mais o conceito de "checagem leve antes de buscar
+// tudo" (as leituras já são baratas e rápidas) — então, para qualquer uso,
+// ela simplesmente sincroniza e devolve o state atual.
+//
+// IMPORTANTE: várias telas ainda fazem `state = dadosNuvem` com o valor
+// devolvido por esta função (herdado da arquitetura antiga, em que a nuvem
+// guardava o "pacote" inteiro). Por isso o retorno aqui precisa ser um
+// clone do state COMPLETO (já mesclado pelo sincronizarComNuvem, que só
+// atualiza os campos que realmente mudaram) — nunca um objeto parcial só
+// com clientes/vendedores/vendTotais, senão esse `state = dadosNuvem`
+// apagaria admin, metas, histórico de importação e outros campos que não
+// estivessem nesse objeto parcial.
+async function buscarDaNuvem(somenteCheck){
+  if(!navigator.onLine) return null;
+  try{
+    await sincronizarComNuvem(true);
+    return JSON.parse(JSON.stringify(state));
+  }catch(e){
+    return null;
   }
 }
 
@@ -1808,7 +1836,7 @@ function renderSyncPage(){
     badge.textContent = '🟢 Ativa';
     badge.style.cssText = 'background:#d4edda;color:#155724;font-size:12px;font-weight:600;padding:4px 12px;border-radius:20px';
     const ultimoTexto = ultimoSyncCloud ? new Date(ultimoSyncCloud).toLocaleTimeString('pt-BR') : 'ainda não sincronizado';
-    detail.innerHTML = `URL configurada: <code style="font-size:11px">${CLOUD_SYNC_URL.substring(0,50)}...</code><br>Última sincronização: <b>${ultimoTexto}</b>`;
+    detail.innerHTML = `Sincronização em nuvem via <b>Firestore</b> (banco de dados em tempo real).<br>Última sincronização: <b>${ultimoTexto}</b>`;
   }
 }
 
