@@ -1,12 +1,12 @@
 {
-  "name": "Divinissima Semijoias — Gestão de Vendas",
-  "short_name": "Divinissima",
+  "name": "Fluxa CRM — Divinissima Semijoias",
+  "short_name": "Fluxa CRM",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait-primary",
-  "background_color": "#2E2E2E",
-  "theme_color": "#2E2E2E",
+  "background_color": "#0EA5A0",
+  "theme_color": "#0EA5A0",
   "icons": [
     {
       "src": "icon-192.png",
