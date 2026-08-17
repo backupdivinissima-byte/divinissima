@@ -186,9 +186,14 @@ tr:hover td{background:var(--cream)}
 .crm-row.laranja{border-left:3px solid #E67E22}
 .crm-row.vermelho{border-left:3px solid #E74C3C}
 .crm-row.cinza{border-left:3px solid #CCC}
-/* ===== CRM KANBAN ===== */
-.kb-board{display:flex;gap:14px;overflow-x:auto;padding-bottom:10px;align-items:flex-start}
-.kb-col{flex:0 0 270px;width:270px;min-width:0;max-width:270px;background:var(--cream2);border-radius:10px;display:flex;flex-direction:column;max-height:calc(100vh - 250px);min-height:220px;border:1px solid var(--border);overflow:hidden}
+/* ===== CRM KANBAN =====
+   As 8 colunas do funil usam grid: cada uma vira uma fração igual (1fr) da
+   largura disponível, então TODAS aparecem lado a lado sem precisar rolar —
+   a largura de cada coluna se ajusta à largura da tela. Só em telas muito
+   estreitas (abaixo do mínimo de 150px por coluna) é que volta a rolar
+   horizontalmente, pra não espremer demais os cartões. */
+.kb-board{display:grid;grid-template-columns:repeat(8,minmax(150px,1fr));gap:10px;overflow-x:auto;padding-bottom:10px;align-items:start}
+.kb-col{width:auto;min-width:0;max-width:none;background:var(--cream2);border-radius:10px;display:flex;flex-direction:column;max-height:calc(100vh - 250px);min-height:220px;border:1px solid var(--border);overflow:hidden}
 .kb-col-head{padding:10px 12px;border-bottom:1px solid var(--border)}
 .kb-col-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0}
 .kb-col-title span:first-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
