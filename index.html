@@ -86,13 +86,16 @@ tr:hover td{background:var(--cream)}
 .nav-logo-img{width:40px;height:40px;object-fit:contain;border-radius:6px;background:var(--cream2);padding:2px}
 .nav-brand{font-size:15px;font-weight:600;color:var(--text)}
 .nav-sub{font-size:10px;color:var(--text-m);letter-spacing:.8px;text-transform:uppercase}
-.layout{display:flex;min-height:calc(100vh - 58px)}
-.sidebar{width:210px;min-width:210px;background:var(--white);border-right:1px solid var(--border);padding:.75rem;display:flex;flex-direction:column;gap:2px}
-.sitem{display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:8px;cursor:pointer;font-size:13px;color:var(--text-s);border:none;background:none;width:100%;text-align:left}
+.layout{display:flex;flex-direction:column;min-height:calc(100vh - 58px)}
+/* Barra de abas superior (antes era sidebar lateral) — fica logo abaixo do
+   .nav principal, ocupa a largura toda e quebra linha em telas estreitas,
+   liberando o .main para usar 100% da largura para os dados. */
+.sidebar{width:100%;background:var(--white);border-right:none;border-bottom:1px solid var(--border);padding:.5rem .75rem;display:flex;flex-direction:row;flex-wrap:wrap;align-items:center;gap:2px;position:sticky;top:58px;z-index:45}
+.sitem{display:flex;align-items:center;gap:6px;padding:8px 14px;border-radius:8px;cursor:pointer;font-size:13px;color:var(--text-s);border:none;background:none;text-align:left;white-space:nowrap}
 .sitem:hover{background:var(--cream)}
 .sitem.active{background:var(--gold-l);color:var(--brown);font-weight:600}
 .sitem .ico{font-size:16px;width:18px;text-align:center}
-.main{flex:1;padding:1.5rem;background:var(--cream);overflow:auto}
+.main{flex:1;padding:1.5rem;background:var(--cream);overflow:visible;width:100%}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
 .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
@@ -353,8 +356,7 @@ tr:hover td{background:var(--cream)}
       <button class="sitem" onclick="aNav('metas',this)"><span class="ico">&#127919;</span> Metas & Comissões</button>
       <button class="sitem" onclick="aNav('links',this)"><span class="ico">&#128279;</span> Links dos vendedores</button>
       <button class="sitem" onclick="aNav('sync',this)"><span class="ico">&#9729;</span> Sincronização Nuvem</button>
-      <div style="flex:1"></div>
-      <div style="padding:8px;font-size:11px;color:var(--text-m);text-align:center">Admin</div>
+      <div style="margin-left:auto;padding:8px 4px;font-size:11px;color:var(--text-m);text-align:center;white-space:nowrap">Admin</div>
     </div>
     <!-- SIDEBAR VENDEDOR -->
     <div id="sb-vend" class="sidebar hidden">
